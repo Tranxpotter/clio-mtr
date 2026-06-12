@@ -1,0 +1,11 @@
+[submodule "src/localization/FAST_LIO"]
+	path = src/localization/FAST_LIO
+	url = https://github.com/hku-mars/FAST_LIO.git
+	branch = ROS2
+[submodule "src/localization/FASTLIO2_ROS2"]
+	path = src/localization/FASTLIO2_ROS2
+	url = https://github.com/shawnzsf/FASTLIO2_ROS2.git
+[submodule "src/navigation/cmu/autonomous_exploration_development_environment"]
+	path = src/navigation/cmu/autonomous_exploration_development_environment
+	url = https://github.com/HongbiaoZ/autonomous_exploration_development_environment.git
+	branch = humble
