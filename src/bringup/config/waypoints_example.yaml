@@ -1,0 +1,17 @@
+# Each waypoint is defined as [x, y, yaw_in_degrees]
+# Coordinates are in the map frame
+
+waypoints:
+  - [14.53, -0.045, 0.0155]
+  - [11.60, -1.0, 0.200]
+  - [14.53, -0.045, 0.0155]
+
+  
+  # # Turn left and move
+  # - [2.0, 2.0, 90.0]
+  
+  # # Move left
+  # - [0.0, 2.0, 180.0]
+  
+  # # Return to origin
+  # - [0.0, 0.0, 270.0]
