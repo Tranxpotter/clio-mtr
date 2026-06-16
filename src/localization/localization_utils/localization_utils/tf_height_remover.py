@@ -98,4 +98,6 @@ def main(args=None):
     except KeyboardInterrupt as e:
         pass
     tf_height_remover.destroy_node()
-    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()

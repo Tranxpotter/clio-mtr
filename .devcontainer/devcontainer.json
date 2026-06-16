@@ -1,0 +1,111 @@
+{
+  "name": "ROS2 Humble",
+  "_usb_device_warning": "WARNING: --device=/dev/bus/usb mounts all USB devices from host into container. Disable this mount on Windows/macOS hosts as USB passthrough behaves differently and may cause conflicts.",
+  "runArgs": [
+    "--privileged",
+    "--network=host",
+    "--gpus=all",
+    "-e",
+    "ROS_DOMAIN_ID=0",
+    "-e",
+    "RMW_IMPLEMENTATION=rmw_cyclonedds_cpp",
+    "--device=/dev/bus/usb"
+  ],
+  "containerEnv": {
+    "ROS_DOMAIN_ID": "0",
+    "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+    "CYCLONEDDS_URI": "file:///workspaces/go2_mid360_ws/.devcontainer/cyclonedds.xml",
+    "DISPLAY_MODE": "vnc",
+    "DISPLAY_VNC": ":99",
+    "DISPLAY_X11": "${localEnv:DISPLAY}",
+    "DISPLAY": ":99",
+    "VNC_PORT": "5900",
+    "NOVNC_PORT": "6080",
+    "QT_QPA_PLATFORM": "xcb",
+    "QT_X11_NO_MITSHM": "1",
+    "XAUTHORITY": "/home/intern/.Xauthority",
+    "NVIDIA_VISIBLE_DEVICES": "all",
+    "NVIDIA_DRIVER_CAPABILITIES": "all"
+  },
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "USERNAME": "${localEnv:USER}",
+      "USER_UID": "1001", // Get the UID with `id -u` on the host machine
+      "USER_GID": "1001", // Get the GID with `id -g` on the host machine
+      "ROS_VERSION": "humble",
+      "WORKSPACE_NAME": "tron_ws",
+      "DISPLAY_MODE": "${containerEnv:DISPLAY_MODE}"
+    }
+  },
+  "overrideCommand": false,
+  "remoteUser": "${localEnv:USER}",
+  "mounts": [
+    {
+      "source": "/tmp/.X11-unix",
+      "target": "/tmp/.X11-unix",
+      "type": "bind"
+    },
+    {
+      "source": "/home/${localEnv:USER}/.opencode/auth.json",
+      "target": "/home/${localEnv:USER}/.opencode/auth.json",
+      "type": "bind"
+    },
+    {
+      "source": "/home/${localEnv:USER}/.config/opencode/",
+      "target": "/home/${localEnv:USER}/.config/opencode/",
+      "type": "bind"
+    }
+  ],
+  "forwardPorts": [
+    5900,
+    6080
+  ],
+  "portsAttributes": {
+    "6080": {
+      "label": "noVNC Web Interface"
+    },
+    "5900": {
+      "label": "VNC Server"
+    }
+  },
+  "postCreateCommand": "bash -lc 'set -e; sudo bash ${containerWorkspaceFolder}/.devcontainer/scripts/post-create.sh \"${containerWorkspaceFolder}\"'",
+  "postStartCommand": "bash -lc 'set -e; sudo bash ${containerWorkspaceFolder}/.devcontainer/scripts/post-start.sh \"${containerWorkspaceFolder}\"'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-python.python",
+        "ms-iot.vscode-ros",
+        "twxs.cmake",
+        "azurity.pcd-viewer"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "bash",
+            "args": [
+              "-l"
+            ]
+          }
+        },
+        "editor.formatOnSave": true,
+        "files.associations": {
+          "*.launch.py": "python"
+        }
+      }
+    }
+  },
+  "features": {
+    "git": "latest",
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/danzilberdan/devcontainers/opencode:0": {},
+    "ghcr.io/devcontainers-extra/features/bun:1": {},
+    "ghcr.io/devcontainers-extra/features/npm-package:1": {},
+    "ghcr.io/devcontainers-extra/features/tmux-apt-get:1": {}
+  }
+}

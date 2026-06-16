@@ -72,4 +72,6 @@ def main(args=None):
     except KeyboardInterrupt as e:
         pass
     static_odom_publisher.destroy_node()
-    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()

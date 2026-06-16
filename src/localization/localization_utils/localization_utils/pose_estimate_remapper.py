@@ -71,8 +71,8 @@ class PoseEstimateRemapper(Node):
 
         # Lidar is now facing downward without horizontal tilts
         # Only apply 180 degree yaw rotation for frame alignment
-        pitch += math.radians(-180.0)
-        yaw += math.radians(180.0)
+        # pitch += math.radians(-180.0)
+        # yaw += math.radians(180.0)
 
         request = Relocalize.Request()
         request.pcd_path = self.map_path
@@ -96,6 +96,11 @@ class PoseEstimateRemapper(Node):
 def main(args=None):
     rclpy.init(args=args)
     goal_pose_remapper = PoseEstimateRemapper()
-    rclpy.spin(goal_pose_remapper)
+    try:
+        rclpy.spin(goal_pose_remapper)
+    except KeyboardInterrupt:
+        pass
     goal_pose_remapper.destroy_node()
-    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()

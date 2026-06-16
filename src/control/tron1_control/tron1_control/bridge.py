@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistStamped
 from std_msgs.msg import String
 import websocket
 import json
@@ -32,7 +32,7 @@ class Tron1Bridge(Node):
         self.ws_thread.start()
 
         # === SUBSCRIBERS ===
-        self.sub_vel = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
+        self.sub_vel = self.create_subscription(TwistStamped, '/cmd_vel', self.cmd_vel_callback, 10)
         self.sub_mode = self.create_subscription(String, '/tron1/mode', self.mode_callback, 10)
 
     def websocket_loop(self):
@@ -77,7 +77,7 @@ class Tron1Bridge(Node):
 
         try:
             self.ws.send(json.dumps(payload))
-            self.get_logger().info("Send successful")
+            # self.get_logger().info("Send successful")
         except Exception as e:
             self.get_logger().error(f"Send failed: {e}")
 
@@ -105,9 +105,9 @@ class Tron1Bridge(Node):
         Sends velocity commands.
         """
         data = {
-            "x": msg.linear.x,      # Forward/Back
-            "y": msg.linear.y,      # Left/Right (Strafe)
-            "z": msg.angular.z      # Rotation
+            "x": msg.twist.linear.x,      # Forward/Back
+            "y": msg.twist.linear.y,      # Left/Right (Strafe)
+            "z": msg.twist.angular.z      # Rotation
         }
         
         self.send_packet("request_twist", data)
@@ -123,7 +123,6 @@ def main(args=None):
         if node.ws:
             node.ws.close()
         node.destroy_node()
-        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

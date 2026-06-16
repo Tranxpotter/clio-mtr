@@ -38,25 +38,23 @@ def generate_launch_description():
     nav2_bringup_dir = get_package_share_directory("nav2_bringup")
 
     # Declare launch arguments
-    declare_launch_driver = DeclareLaunchArgument('driver', default_value="True")
+    declare_use_bag = DeclareLaunchArgument('use_bag', default_value="False")
     declare_launch_fastlio = DeclareLaunchArgument('fastlio', default_value="True")
     declare_launch_static_odom = DeclareLaunchArgument('static_odom', default_value="True")
     declare_launch_localizer = DeclareLaunchArgument('localizer', default_value="True")
     declare_launch_remapper = DeclareLaunchArgument('remapper', default_value="True")
     declare_map_path = DeclareLaunchArgument('map_path', default_value="iw_maps/11-3-IWLG-full-processed2.pcd")
     declare_map_2d_path = DeclareLaunchArgument('map_2d_path', default_value="iw_2d_maps/11-3-IWLG-full.yaml")
-    declare_use_sim_time = DeclareLaunchArgument('use_sim_time', default_value="False")
     declare_bag = DeclareLaunchArgument('record_bag', default_value="True")
     declare_bag_path = DeclareLaunchArgument('bag_path', default_value="rosbags/mapping")
 
-    launch_driver = LaunchConfiguration('driver')
+    use_bag = LaunchConfiguration('use_bag')
     launch_fastlio = LaunchConfiguration('fastlio')
     launch_static_odom = LaunchConfiguration('static_odom')
     launch_localizer = LaunchConfiguration('localizer')
     launch_remapper = LaunchConfiguration('remapper')
     map_path = LaunchConfiguration('map_path')
     map_2d_path = LaunchConfiguration('map_2d_path')
-    use_sim_time = LaunchConfiguration('use_sim_time')
     bag_path = LaunchConfiguration('bag_path')
     record_bag = LaunchConfiguration('record_bag')
 
@@ -69,12 +67,12 @@ def generate_launch_description():
                 "msg_MID360_launch.py"
             ])
         ), 
-        condition=IfCondition(launch_driver)
+        condition=UnlessCondition(use_bag)
     )
 
 
 
-    # Static odom to link map and camera_init
+    # Static odom for localizer to link map and robot_init
     static_odom_node = Node(
         package="localization_utils", 
         executable="static_odom_publisher", 
@@ -83,11 +81,11 @@ def generate_launch_description():
         parameters=[{
             "input_topic":"/cloud_registered", 
             "output_topic":"/static_odom", 
-            "parent_frame":"/camera_init", 
+            "parent_frame":"/robot_init", 
             "child_frame":"/static_odom", 
             "period":0.01, 
             "verbose":False, 
-            "use_sim_time":use_sim_time
+            "use_sim_time":use_bag
         }], 
         condition=IfCondition(launch_static_odom)
     )
@@ -96,7 +94,7 @@ def generate_launch_description():
 
     fastlio_group = GroupAction(
         [
-            SetRemap("/Odometry", "/fastlio2/lio_odom"), 
+            SetRemap("/Odometry", "/fastlio/Odometry"), 
 
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
@@ -108,7 +106,7 @@ def generate_launch_description():
                 ), 
                 launch_arguments={
                     "config_file":"mid360.yaml", 
-                    "use_sim_time":use_sim_time, 
+                    "use_sim_time":use_bag, 
                     "rviz":"false"
                 }.items(), 
                 condition=IfCondition(launch_fastlio)
@@ -139,7 +137,7 @@ def generate_launch_description():
                         "config_path": localizer_config_path.perform(
                             launch.LaunchContext()
                         ), 
-                        "use_sim_time":use_sim_time
+                        "use_sim_time":use_bag
                     }
                 ],
                 condition=IfCondition(launch_localizer)
@@ -152,7 +150,7 @@ def generate_launch_description():
                 output="screen",
                 arguments=["-d", rviz_cfg.perform(launch.LaunchContext())],
                 parameters=[{
-                    "use_sim_time":use_sim_time
+                    "use_sim_time":use_bag
                 }], 
                 condition=IfCondition(launch_localizer)
             )
@@ -165,47 +163,53 @@ def generate_launch_description():
         parameters=[{
             "map_path":map_path, 
             "verbose":False, 
-            "use_sim_time":use_sim_time
+            "use_sim_time":use_bag
         }], 
         condition=IfCondition(launch_remapper)
     )
 
-
-    # Currently works pretty well, though can still think about whether there is a more elegant solution
-    height_remover = Node(
-        package="localization_utils", 
-        executable="tf_height_remover", 
-        name="tf_height_remover", 
-        parameters=[{
-            "world_frame":"map", 
-            "input_frame":"robot_footprint", 
-            "output_frame":"base_footprint", 
-            "verbose":False, 
-            "z_extra_offset":0.2, 
-            "use_sim_time":use_sim_time
-        }]
-    )
-
-    robot_init_pub = Node(
+    # Static transform from robot_init to camera_init
+    camera_init_static_pub = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
-        name="robot_init_pub",
-        arguments=["0", "0", "0", "3.14159", "-3.14159", "0", "camera_init", "robot_init"], # x, y, z, yaw, pitch, roll
+        name="camera_init_static_pub",
+        arguments=["0", "0", "0", "0.0", "0.0", "3.1415927", "robot_init", "camera_init"], # x, y, z, yaw, pitch, roll
         parameters=[{
-            "use_sim_time":use_sim_time
+            "use_sim_time":use_bag
         }]
     )
 
-    footprint_pub = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="footprint_pub",
-        arguments=["0", "0", "0", "3.14159", "-3.14159", "0", "body", "robot_footprint"],
-        parameters=[{
-            "use_sim_time":use_sim_time
-        }]
-    )
     
+    sensor_frame_corrector_node = Node(
+        package="localization_utils", 
+        executable="sensor_frame_corrector", 
+        name="sensor_frame_corrector", 
+        parameters=[{
+            "roll":0.0, 
+            "pitch":3.14159265359, 
+            "yaw":3.14159265359, 
+            "point_cloud_input_topic":"/cloud_registered", 
+            "point_cloud_output_topic":"/cloud_registered_corrected", 
+            "odometry_input_topic":"/fastlio/Odometry", 
+            'odometry_output_topic': '/robot_odom', 
+            'verbose':False, 
+            "use_sim_time":use_bag
+        }]
+    )
+
+    
+    # CMU Local Planner
+    cmu_stack = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('vehicle_simulator'), 'launch', 'system_real_robot.launch')
+        ), 
+        launch_arguments={
+            "odom_frame":"robot_init", 
+            "robot_frame":"robot_footprint", 
+            "use_sim_time":use_bag
+        }.items()
+    )
+
 
     # Tron control node
     control_node = Node(
@@ -216,35 +220,29 @@ def generate_launch_description():
             "robot_ip":'10.192.1.2', 
             'robot_port': 5000, 
             'accid': 'WF_TRON1A_212', 
-        }]
+        }], 
+        condition=UnlessCondition(use_bag)
     )
 
 
-    # CMU Local Planner
-    cmu_stack = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(
-            get_package_share_directory('vehicle_simulator'), 'launch', 'system_real_robot.launch')
-        )
-    )
 
 
 
     rosbag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'record', '-o', bag_path, "/livox/lidar", "/livox/imu"],
+        cmd=['ros2', 'bag', 'record', '-o', bag_path, "/livox/lidar", "/livox/imu", "/cmd_vel"],
         output='screen', 
         condition=IfCondition(record_bag), 
         name="rosbag_recorder"
     )
 
     return LaunchDescription([
-    declare_launch_driver, 
+    declare_use_bag, 
     declare_launch_fastlio, 
     declare_launch_static_odom, 
     declare_launch_localizer, 
     declare_launch_remapper, 
     declare_map_path, 
     declare_map_2d_path, 
-    declare_use_sim_time, 
     declare_bag, 
     declare_bag_path, 
     driver, 
@@ -253,10 +251,9 @@ def generate_launch_description():
     localizer_node, 
     localizer_rviz,
     remapper, 
-    height_remover, 
-    robot_init_pub,
-    footprint_pub,
-    control_node, 
+    camera_init_static_pub, 
+    sensor_frame_corrector_node, 
     cmu_stack, 
+    # control_node, 
     rosbag
     ])
