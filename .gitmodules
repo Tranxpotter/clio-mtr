@@ -7,5 +7,5 @@
 	url = https://github.com/shawnzsf/FASTLIO2_ROS2.git
 [submodule "src/navigation/cmu/autonomous_exploration_development_environment"]
 	path = src/navigation/cmu/autonomous_exploration_development_environment
-	url = https://github.com/HongbiaoZ/autonomous_exploration_development_environment.git
-	branch = humble
+	url = https://github.com/Tranxpotter/autonomous_exploration_development_environment.git
+	branch = custom

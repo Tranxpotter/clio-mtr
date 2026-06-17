@@ -4,7 +4,7 @@
   "runArgs": [
     "--privileged",
     "--network=host",
-    "--gpus=all",
+    "--runtime=nvidia",
     "-e",
     "ROS_DOMAIN_ID=0",
     "-e",
@@ -14,7 +14,7 @@
   "containerEnv": {
     "ROS_DOMAIN_ID": "0",
     "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
-    "CYCLONEDDS_URI": "file:///workspaces/go2_mid360_ws/.devcontainer/cyclonedds.xml",
+    "CYCLONEDDS_URI": "file:///workspaces/clio_mtr/.devcontainer/cyclonedds.xml",
     "DISPLAY_MODE": "vnc",
     "DISPLAY_VNC": ":99",
     "DISPLAY_X11": "${localEnv:DISPLAY}",
@@ -44,16 +44,6 @@
     {
       "source": "/tmp/.X11-unix",
       "target": "/tmp/.X11-unix",
-      "type": "bind"
-    },
-    {
-      "source": "/home/${localEnv:USER}/.opencode/auth.json",
-      "target": "/home/${localEnv:USER}/.opencode/auth.json",
-      "type": "bind"
-    },
-    {
-      "source": "/home/${localEnv:USER}/.config/opencode/",
-      "target": "/home/${localEnv:USER}/.config/opencode/",
       "type": "bind"
     }
   ],
@@ -103,7 +93,6 @@
     "git": "latest",
     "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/node:1": {},
-    "ghcr.io/danzilberdan/devcontainers/opencode:0": {},
     "ghcr.io/devcontainers-extra/features/bun:1": {},
     "ghcr.io/devcontainers-extra/features/npm-package:1": {},
     "ghcr.io/devcontainers-extra/features/tmux-apt-get:1": {}
