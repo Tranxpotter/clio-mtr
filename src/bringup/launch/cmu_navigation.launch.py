@@ -36,7 +36,7 @@ def generate_launch_description():
     localizer_dir = get_package_share_directory("localizer")
     localization_utils_dir = get_package_share_directory("localization_utils")
     nav2_bringup_dir = get_package_share_directory("nav2_bringup")
-    velocity_smoother_dir = get_package_share_directory("kobuki_velocity_smoother")
+    velocity_smoother_dir = get_package_share_directory("velocity_smoother")
 
     # Declare launch arguments
     declare_use_bag = DeclareLaunchArgument('use_bag', default_value="False")
@@ -239,8 +239,8 @@ def generate_launch_description():
 
     realtime_T_plotter_node = Node(
         package="debug", 
-        executable="realtime_twist_plotter_node", 
-        name="realtime_twist_plotter_node", 
+        executable="realtime_twist_stamped_plotter_node", 
+        name="realtime_twist_stamped_plotter_node2", 
         condition=IfCondition(plot), 
         parameters=[{
             "topic_name":"/cmd_vel_smoothed"
@@ -259,7 +259,7 @@ def generate_launch_description():
             PathJoinSubstitution([
                 velocity_smoother_dir, 
                 "launch", 
-                "velocity_smoother-launch.py"
+                "smoother.launch.py"
             ]), 
         ), 
         launch_arguments={
