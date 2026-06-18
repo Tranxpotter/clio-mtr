@@ -23,7 +23,7 @@ from launch.actions import IncludeLaunchDescription, LogInfo, TimerAction, Decla
 from launch.substitutions import LaunchConfiguration, PythonExpression, PathJoinSubstitution
 from launch.event_handlers import OnShutdown, OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource, FrontendLaunchDescriptionSource
-from launch_ros.actions import Node, SetRemap
+from launch_ros.actions import Node, SetRemap, PushRosNamespace
 from launch.conditions import IfCondition, UnlessCondition
 from launch_ros.substitutions import FindPackageShare
 
@@ -36,6 +36,7 @@ def generate_launch_description():
     localizer_dir = get_package_share_directory("localizer")
     localization_utils_dir = get_package_share_directory("localization_utils")
     nav2_bringup_dir = get_package_share_directory("nav2_bringup")
+    velocity_smoother_dir = get_package_share_directory("kobuki_velocity_smoother")
 
     # Declare launch arguments
     declare_use_bag = DeclareLaunchArgument('use_bag', default_value="False")
@@ -47,6 +48,7 @@ def generate_launch_description():
     declare_map_2d_path = DeclareLaunchArgument('map_2d_path', default_value="iw_2d_maps/11-3-IWLG-full.yaml")
     declare_bag = DeclareLaunchArgument('record_bag', default_value="True")
     declare_bag_path = DeclareLaunchArgument('bag_path', default_value="rosbags/mapping")
+    declare_plot = DeclareLaunchArgument('plot', default_value="True")
 
     use_bag = LaunchConfiguration('use_bag')
     launch_fastlio = LaunchConfiguration('fastlio')
@@ -57,6 +59,7 @@ def generate_launch_description():
     map_2d_path = LaunchConfiguration('map_2d_path')
     bag_path = LaunchConfiguration('bag_path')
     record_bag = LaunchConfiguration('record_bag')
+    plot = LaunchConfiguration('plot')
 
     # Livox ros driver 2
     driver = IncludeLaunchDescription(
@@ -94,7 +97,7 @@ def generate_launch_description():
 
     fastlio_group = GroupAction(
         [
-            SetRemap("/Odometry", "/fastlio/Odometry"), 
+            # SetRemap("/Odometry", "/fastlio/Odometry"), 
 
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
@@ -190,7 +193,7 @@ def generate_launch_description():
             "yaw":3.14159265359, 
             "point_cloud_input_topic":"/cloud_registered", 
             "point_cloud_output_topic":"/cloud_registered_corrected", 
-            "odometry_input_topic":"/fastlio/Odometry", 
+            "odometry_input_topic":"/Odometry", 
             'odometry_output_topic': '/robot_odom', 
             'verbose':False, 
             "use_sim_time":use_bag
@@ -199,16 +202,16 @@ def generate_launch_description():
 
     
     # CMU Local Planner
-    cmu_stack = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(
-            get_package_share_directory('vehicle_simulator'), 'launch', 'system_real_robot.launch')
-        ), 
-        launch_arguments={
-            "odom_frame":"robot_init", 
-            "robot_frame":"robot_footprint", 
-            "use_sim_time":use_bag
-        }.items()
-    )
+    cmu_group = IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(os.path.join(
+                    get_package_share_directory('vehicle_simulator'), 'launch', 'system_real_robot.launch')
+                ), 
+                launch_arguments={
+                    "odom_frame":"robot_init", 
+                    "robot_frame":"robot_footprint", 
+                    "use_sim_time":use_bag
+                }.items()
+            )
 
 
     # Tron control node
@@ -224,9 +227,45 @@ def generate_launch_description():
         condition=UnlessCondition(use_bag)
     )
 
+    realtime_TS_plotter_node = Node(
+        package="debug", 
+        executable="realtime_twist_stamped_plotter_node", 
+        name="realtime_twist_stamped_plotter_node", 
+        condition=IfCondition(plot), 
+        parameters=[{
+            "topic_name":"/cmd_vel"
+        }]
+    )
 
+    realtime_T_plotter_node = Node(
+        package="debug", 
+        executable="realtime_twist_plotter_node", 
+        name="realtime_twist_plotter_node", 
+        condition=IfCondition(plot), 
+        parameters=[{
+            "topic_name":"/cmd_vel_smoothed"
+        }]
+    )
 
+    stability_visualizer_node = Node(
+        package="debug", 
+        executable="path_stability_visualizer_node", 
+        name="path_stability_visualizer_node", 
+        condition=IfCondition(plot)
+    )
 
+    velocity_smoother = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                velocity_smoother_dir, 
+                "launch", 
+                "velocity_smoother-launch.py"
+            ]), 
+        ), 
+        launch_arguments={
+            "use_sim_time":use_bag
+        }.items()
+    )
 
     rosbag = ExecuteProcess(
         cmd=['ros2', 'bag', 'record', '-o', bag_path, "/livox/lidar", "/livox/imu", "/cmd_vel"],
@@ -245,6 +284,7 @@ def generate_launch_description():
     declare_map_2d_path, 
     declare_bag, 
     declare_bag_path, 
+    declare_plot, 
     driver, 
     fastlio_group, 
     static_odom_node, 
@@ -253,7 +293,11 @@ def generate_launch_description():
     remapper, 
     camera_init_static_pub, 
     sensor_frame_corrector_node, 
-    cmu_stack, 
-    # control_node, 
+    cmu_group, 
+    control_node, 
+    realtime_TS_plotter_node, 
+    realtime_T_plotter_node, 
+    stability_visualizer_node, 
+    velocity_smoother, 
     rosbag
     ])

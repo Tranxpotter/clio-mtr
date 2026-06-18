@@ -25,6 +25,9 @@ setup(
     entry_points={
         'console_scripts': [
             'twist_plotter_node = debug.twist_plotter_node:main',
+            'realtime_twist_plotter_node = debug.realtime_twist_plotter_node:main',
+            'realtime_twist_stamped_plotter_node = debug.realtime_twist_stamped_plotter_node:main', 
+            'path_stability_visualizer_node = debug.path_stability_visualizer_node:main',
         ],
     },
 )

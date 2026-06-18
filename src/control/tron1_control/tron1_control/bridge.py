@@ -32,7 +32,7 @@ class Tron1Bridge(Node):
         self.ws_thread.start()
 
         # === SUBSCRIBERS ===
-        self.sub_vel = self.create_subscription(TwistStamped, '/cmd_vel', self.cmd_vel_callback, 10)
+        self.sub_vel = self.create_subscription(Twist, '/cmd_vel_smoothed', self.cmd_vel_callback, 10)
         self.sub_mode = self.create_subscription(String, '/tron1/mode', self.mode_callback, 10)
 
     def websocket_loop(self):
@@ -100,15 +100,22 @@ class Tron1Bridge(Node):
         else:
             self.get_logger().warn(f"Unknown mode: {mode}")
 
-    def cmd_vel_callback(self, msg):
+    def cmd_vel_callback(self, msg:Twist):
         """
         Sends velocity commands.
         """
         data = {
-            "x": msg.twist.linear.x,      # Forward/Back
-            "y": msg.twist.linear.y,      # Left/Right (Strafe)
-            "z": msg.twist.angular.z      # Rotation
+            "x": msg.linear.x,      # Forward/Back
+            "y": msg.linear.y,      # Left/Right (Strafe)
+            "z": msg.angular.z      # Rotation
         }
+
+        # For TwistStamped
+        # data = {
+        #     "x": msg.twist.linear.x,      # Forward/Back
+        #     "y": msg.twist.linear.y,      # Left/Right (Strafe)
+        #     "z": msg.twist.angular.z      # Rotation
+        # }
         
         self.send_packet("request_twist", data)
 

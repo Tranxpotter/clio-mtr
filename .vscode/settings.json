@@ -1,3 +1,12 @@
 {
-    "cmake.sourceDirectory": "/home/iwintern/clio_mtr/src/localization/FASTLIO2_ROS2/localizer"
+    "cmake.sourceDirectory": "/home/abc/Code/innowing/clio-mtr/src/localization/FASTLIO2_ROS2/pgo",
+    "ROS2.distro": "humble",
+    "python.autoComplete.extraPaths": [
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ]
 }
