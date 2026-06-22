@@ -268,7 +268,7 @@ def generate_launch_description():
     )
 
     rosbag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'record', '-o', bag_path, "/livox/lidar", "/livox/imu", "/cmd_vel", "/initialpose", "/way_point"],
+        cmd=['ros2', 'bag', 'record', '-o', bag_path, "/livox/lidar", "/livox/imu", "/initialpose", "/way_point"],
         output='screen', 
         condition=IfCondition(record_bag), 
         name="rosbag_recorder"
