@@ -12,3 +12,7 @@
 [submodule "src/control/kobuki_velocity_smoother"]
 	path = src/control/kobuki_velocity_smoother
 	url = https://github.com/Tranxpotter/kobuki_velocity_smoother.git
+[submodule "src/navigation/cmu/far_planner"]
+	path = src/navigation/cmu/far_planner
+	url = https://github.com/Tranxpotter/far_planner.git
+	branch = humble-jazzy

@@ -17,6 +17,7 @@ Launch arguments: (* important)
 import os
 import math
 import launch
+import datetime
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, LogInfo, TimerAction, DeclareLaunchArgument, ExecuteProcess, RegisterEventHandler, GroupAction
@@ -44,11 +45,11 @@ def generate_launch_description():
     declare_launch_static_odom = DeclareLaunchArgument('static_odom', default_value="True")
     declare_launch_localizer = DeclareLaunchArgument('localizer', default_value="True")
     declare_launch_remapper = DeclareLaunchArgument('remapper', default_value="True")
-    declare_map_path = DeclareLaunchArgument('map_path', default_value="iw_maps/11-3-IWLG-full-processed2.pcd")
+    declare_map_path = DeclareLaunchArgument('map_path', default_value="iw_maps/11-3-IWLG-full.pcd")
     declare_map_2d_path = DeclareLaunchArgument('map_2d_path', default_value="iw_2d_maps/11-3-IWLG-full.yaml")
     declare_bag = DeclareLaunchArgument('record_bag', default_value="True")
-    declare_bag_path = DeclareLaunchArgument('bag_path', default_value="rosbags/mapping")
-    declare_plot = DeclareLaunchArgument('plot', default_value="True")
+    declare_bag_path = DeclareLaunchArgument('bag_path', default_value="rosbags/")
+    declare_plot = DeclareLaunchArgument('plot', default_value="False")
 
     use_bag = LaunchConfiguration('use_bag')
     launch_fastlio = LaunchConfiguration('fastlio')
@@ -213,6 +214,16 @@ def generate_launch_description():
                 }.items()
             )
 
+    # FAR Planner
+    far_group = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('far_planner'), 'launch', 'far_planner.launch')
+        ), 
+        launch_arguments={
+            "use_sim_time":use_bag
+        }.items()
+    )
+
 
     # Tron control node
     control_node = Node(
@@ -267,8 +278,9 @@ def generate_launch_description():
         }.items()
     )
 
+    bag_name = datetime.datetime.now().isoformat(timespec="seconds").replace(":", "_")
     rosbag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'record', '-o', bag_path, "/livox/lidar", "/livox/imu", "/initialpose", "/way_point"],
+        cmd=['ros2', 'bag', 'record', '-o', [bag_path, bag_name], "/livox/lidar", "/livox/imu", "/initialpose", "/way_point"],
         output='screen', 
         condition=IfCondition(record_bag), 
         name="rosbag_recorder"
@@ -294,7 +306,8 @@ def generate_launch_description():
     camera_init_static_pub, 
     sensor_frame_corrector_node, 
     cmu_group, 
-    control_node, 
+    far_group, 
+    # control_node, 
     realtime_TS_plotter_node, 
     realtime_T_plotter_node, 
     stability_visualizer_node, 
