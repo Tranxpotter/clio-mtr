@@ -15,4 +15,4 @@
 [submodule "src/navigation/cmu/far_planner"]
 	path = src/navigation/cmu/far_planner
 	url = https://github.com/Tranxpotter/far_planner.git
-	branch = humble-jazzy
+	branch = custom
