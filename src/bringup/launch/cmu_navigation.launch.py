@@ -192,12 +192,28 @@ def generate_launch_description():
             "roll":0.0, 
             "pitch":3.14159265359, 
             "yaw":3.14159265359, 
-            "point_cloud_input_topic":"/cloud_registered", 
+            "point_cloud_input_topic":"/cloud_aggregated", 
             "point_cloud_output_topic":"/cloud_registered_corrected", 
             "odometry_input_topic":"/Odometry", 
             'odometry_output_topic': '/robot_odom', 
             'verbose':False, 
             "use_sim_time":use_bag
+        }]
+    )
+
+
+    # Cloud aggregator
+    cloud_aggregator = Node(
+        package="cloud_aggregator", 
+        executable="cloud_aggregator_node", 
+        name="cloud_aggregator_node", 
+        parameters=[{
+            "input_topic":"/cloud_registered", 
+            "output_topic":"/cloud_aggregated", 
+            "publish_rate_hz":5.0, 
+            "accumulation_time_sec":1.0, 
+            "use_voxel_filter":True, 
+            "voxel_leaf_size":0.05
         }]
     )
 
@@ -305,6 +321,7 @@ def generate_launch_description():
     remapper, 
     camera_init_static_pub, 
     sensor_frame_corrector_node, 
+    cloud_aggregator, 
     cmu_group, 
     far_group, 
     # control_node, 
