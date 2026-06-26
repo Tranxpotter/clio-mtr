@@ -286,6 +286,12 @@ def generate_launch_description():
         name="rosbag_recorder"
     )
 
+    debug_rosbag = ExecuteProcess(
+        cmd=['ros2', 'bag', 'record', '-o', [bag_path, bag_name], "/cloud_registered_corrected", "/robot_odom"],
+        output='screen', 
+        name="debug_rosbag_recorder"
+    )
+
     return LaunchDescription([
     declare_use_bag, 
     declare_launch_fastlio, 
@@ -312,5 +318,6 @@ def generate_launch_description():
     realtime_T_plotter_node, 
     stability_visualizer_node, 
     velocity_smoother, 
-    rosbag
+    rosbag, 
+    debug_rosbag
     ])
