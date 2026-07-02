@@ -1,0 +1,5 @@
+FASTLIO_MAP_PATH="src/localization/FAST_LIO/PCD/scans.pcd"
+FAR_PLANNER_MAP_PATH="map.vgh"
+
+cp $FASTLIO_MAP_PATH $1
+cp $FAR_PLANNER_MAP_PATH $2

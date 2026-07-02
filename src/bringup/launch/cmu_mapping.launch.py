@@ -16,7 +16,6 @@ Launch arguments: (* important)
 
 import os
 import math
-import json
 import launch
 import datetime
 from ament_index_python.packages import get_package_share_directory
@@ -31,55 +30,21 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    # Set these values
-    default_map_path = "iw_maps/2_processed.pcd"
-    default_graph_path = "iw_graphs/2.vgh"
-
-
-
-    location_options = {
-        "origin":{
-            "pcd_path":default_map_path, "x":0.0, "y":0.0, "z":0.0, "yaw":0.0, "pitch":0.0, "roll":0.0
-        }
-    }
-    location = location_options["origin"]
-    auto_relocalize_command = [
-        "ros2", "service", "call", "/localizer/relocalize", 
-        'interface/srv/Relocalize',
-        json.dumps(location)
-    ]
-    auto_read_graph_command = [
-        "ros2", "topic", "pub", "-1", "/read_file_dir", "std_msgs/String", f'{{"data": "{default_graph_path}"}}'
-    ]
-
-
     this_pkg_name = 'bringup'
     this_pkg_dir = get_package_share_directory(this_pkg_name)
     driver_dir = get_package_share_directory("livox_ros_driver2")
     fastlio_dir = get_package_share_directory("fast_lio")
-    localizer_dir = get_package_share_directory("localizer")
-    localization_utils_dir = get_package_share_directory("localization_utils")
     velocity_smoother_dir = get_package_share_directory("velocity_smoother")
 
     # Declare launch arguments
     declare_use_bag = DeclareLaunchArgument('use_bag', default_value="False")
     declare_launch_fastlio = DeclareLaunchArgument('fastlio', default_value="True")
-    declare_launch_static_odom = DeclareLaunchArgument('static_odom', default_value="True")
-    declare_launch_localizer = DeclareLaunchArgument('localizer', default_value="True")
-    declare_launch_remapper = DeclareLaunchArgument('remapper', default_value="True")
-    declare_map_path = DeclareLaunchArgument('map_path', default_value=default_map_path)
-    declare_graph_path = DeclareLaunchArgument('graph_path', default_value=default_graph_path)
     declare_bag = DeclareLaunchArgument('record_bag', default_value="True")
     declare_bag_path = DeclareLaunchArgument('bag_path', default_value="rosbags/")
     declare_plot = DeclareLaunchArgument('plot', default_value="False")
 
     use_bag = LaunchConfiguration('use_bag')
     launch_fastlio = LaunchConfiguration('fastlio')
-    launch_static_odom = LaunchConfiguration('static_odom')
-    launch_localizer = LaunchConfiguration('localizer')
-    launch_remapper = LaunchConfiguration('remapper')
-    map_path = LaunchConfiguration('map_path')
-    graph_path = LaunchConfiguration('graph_path')
     bag_path = LaunchConfiguration('bag_path')
     record_bag = LaunchConfiguration('record_bag')
     plot = LaunchConfiguration('plot')
@@ -96,25 +61,6 @@ def generate_launch_description():
         condition=UnlessCondition(use_bag)
     )
 
-
-
-    # Static odom for localizer to link map and robot_init
-    static_odom_node = Node(
-        package="localization_utils", 
-        executable="static_odom_publisher", 
-        name="static_odom_publisher", 
-        output="screen", 
-        parameters=[{
-            "input_topic":"/cloud_registered", 
-            "output_topic":"/static_odom", 
-            "parent_frame":"/robot_init", 
-            "child_frame":"/static_odom", 
-            "period":0.01, 
-            "verbose":False, 
-            "use_sim_time":use_bag
-        }], 
-        condition=IfCondition(launch_static_odom)
-    )
 
 
 
@@ -142,76 +88,18 @@ def generate_launch_description():
             ])]
     )
 
-    
-
-    # ===================== Localizer Launch ============================
-
-    localizer_config_path = PathJoinSubstitution(
-        [FindPackageShare("localizer"), "config", "localizer.yaml"]
-    )
-
-    rviz_cfg = PathJoinSubstitution(
-        [FindPackageShare("localizer"), "rviz", "localizer.rviz"]
-    )
-
-    localizer_node = Node(
-        package="localizer",
-        namespace="localizer",
-        executable="localizer_node",
-        name="localizer_node",
-        output="screen",
-        parameters=[
-            {
-                "config_path": localizer_config_path.perform(
-                    launch.LaunchContext()
-                ), 
-                "use_sim_time":use_bag
-            }
-        ],
-        condition=IfCondition(launch_localizer)
-    )
-
-    localizer_rviz = Node(
-        package="rviz2",
-        namespace="localizer",
-        executable="rviz2",
-        name="rviz2",
-        output="screen",
-        arguments=["-d", rviz_cfg.perform(launch.LaunchContext())],
+    # Use static transform from map to robot_init instead of localizer
+    robot_init_static_pub = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="robot_init_static_pub",
+        arguments=["0", "0", "0", "0.0", "0.0", "0.0", "map", "robot_init"], # x, y, z, yaw, pitch, roll
         parameters=[{
             "use_sim_time":use_bag
-        }], 
-        condition=IfCondition(launch_localizer)
-    )
-
-    localizer_group = TimerAction(
-        period=3.0, 
-        actions=[
-            localizer_node, 
-            localizer_rviz
-        ]
+        }]
     )
     
 
-    remapper = TimerAction(
-        period=4.0, 
-        actions=[
-            Node(
-                package="localization_utils", 
-                executable="pose_estimate_remapper", 
-                name="pose_estimate_remapper", 
-                parameters=[{
-                    "map_path":map_path, 
-                    "graph_path":graph_path, 
-                    "verbose":True, 
-                    "use_sim_time":use_bag
-                }], 
-                condition=IfCondition(launch_remapper)
-            )
-        ]
-    )
-    
-    # =====================================================
 
     # Static transform from robot_init to camera_init
     camera_init_static_pub = Node(
@@ -337,36 +225,16 @@ def generate_launch_description():
         name="rosbag_recorder"
     )
 
-    debug_rosbag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'record', '-o', [bag_path, bag_name], "/cloud_registered_corrected", "/robot_odom", "/goal_point"],
-        output='screen', 
-        name="debug_rosbag_recorder"
-    )
-
-    auto_relocalize = TimerAction(
-        period=7.0, 
-        actions=[
-            ExecuteProcess(cmd=auto_relocalize_command), 
-            ExecuteProcess(cmd=auto_read_graph_command)
-        ]
-    )
 
     return LaunchDescription([
     declare_use_bag, 
     declare_launch_fastlio, 
-    declare_launch_static_odom, 
-    declare_launch_localizer, 
-    declare_launch_remapper, 
-    declare_map_path, 
-    declare_graph_path, 
     declare_bag, 
     declare_bag_path, 
     declare_plot, 
     driver, 
     fastlio_group, 
-    static_odom_node, 
-    localizer_group, 
-    remapper, 
+    robot_init_static_pub, 
     camera_init_static_pub, 
     sensor_frame_corrector_node, 
     cmu_group, 
@@ -376,7 +244,5 @@ def generate_launch_description():
     realtime_T_plotter_node, 
     stability_visualizer_node, 
     velocity_smoother, 
-    rosbag, 
-    # debug_rosbag, 
-    auto_relocalize
+    rosbag
     ])

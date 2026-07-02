@@ -13,3 +13,6 @@
 	path = src/navigation/cmu/far_planner
 	url = https://github.com/Tranxpotter/far_planner.git
 	branch = custom
+[submodule "pcd-map-preprocessing"]
+	path = pcd-map-preprocessing
+	url = https://github.com/Tranxpotter/pcd-map-preprocessing.git

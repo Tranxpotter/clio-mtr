@@ -11,3 +11,5 @@ rosbags
 *.png
 .vscode
 .devcontainer/devcontainer-lock.json
+*.vgh
+*.pcd
