@@ -1,6 +1,7 @@
 #include <memory>
 #include <string>
 #include "rclcpp/rclcpp.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 
 namespace ema_velocity_smoother
@@ -37,42 +38,40 @@ class EmaVelocitySmoother : public rclcpp::Node
             auto qos = rclcpp::QoS(rclcpp::KeepLast(10));
 
             // Publishers and Subscribers
-            pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>(output_topic, qos);
-            sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(
+            pub_ = this->create_publisher<geometry_msgs::msg::Twist>(output_topic, qos);
+            sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
             input_topic, qos, std::bind(&EmaVelocitySmoother::velocityCallback, this, std::placeholders::_1));
         }
 
     private:
-        void velocityCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
+        void velocityCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
         {
-            auto smoothed_msg = std::make_unique<geometry_msgs::msg::TwistStamped>();
-            smoothed_msg->header.stamp = this->get_clock()->now();
-            smoothed_msg->header.frame_id = frame_id_;
+            auto smoothed_msg = std::make_unique<geometry_msgs::msg::Twist>();
 
             if (first_msg_) {
             // Initialize filter with the very first message received
-                current_linear_x_ = msg->twist.linear.x;
-                current_linear_y_ = msg->twist.linear.y;
-                current_angular_z_ = msg->twist.angular.z;
+                current_linear_x_ = msg->linear.x;
+                current_linear_y_ = msg->linear.y;
+                current_angular_z_ = msg->angular.z;
             first_msg_ = false;
             } else {
             // Apply Exponential Moving Average Formula
-                current_linear_x_ = (alpha_linear_ * msg->twist.linear.x) + ((1.0 - alpha_linear_) * current_linear_x_);
-                current_linear_y_ = (alpha_linear_ * msg->twist.linear.y) + ((1.0 - alpha_linear_) * current_linear_y_);
-                current_angular_z_ = (alpha_angular_ * msg->twist.angular.z) + ((1.0 - alpha_angular_) * current_angular_z_);
+                current_linear_x_ = (alpha_linear_ * msg->linear.x) + ((1.0 - alpha_linear_) * current_linear_x_);
+                current_linear_y_ = (alpha_linear_ * msg->linear.y) + ((1.0 - alpha_linear_) * current_linear_y_);
+                current_angular_z_ = (alpha_angular_ * msg->angular.z) + ((1.0 - alpha_angular_) * current_angular_z_);
             }
 
             // Populate smoothed message tracking
-            smoothed_msg->twist.linear.x = current_linear_x_;
-            smoothed_msg->twist.linear.y = current_linear_y_;
-            smoothed_msg->twist.angular.z = current_angular_z_;
+            smoothed_msg->linear.x = current_linear_x_;
+            smoothed_msg->linear.y = current_linear_y_;
+            smoothed_msg->angular.z = current_angular_z_;
 
             pub_->publish(std::move(smoothed_msg));
         }
 
         // Node Variables
-        rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr sub_;
-        rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pub_;
+        rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_;
+        rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_;
 
         std::string frame_id_;
         double alpha_linear_;
