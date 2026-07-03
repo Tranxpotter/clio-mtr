@@ -188,7 +188,7 @@ def generate_launch_description():
         period=3.0, 
         actions=[
             localizer_node, 
-            localizer_rviz
+            # localizer_rviz
         ]
     )
     
