@@ -31,6 +31,8 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     velocity_smoother_dir = get_package_share_directory("velocity_smoother")
+    goal_rotator_wrapper_dir = get_package_share_directory("goal_rotator_wrapper")
+
 
     # Declare launch arguments
     declare_use_sim_time = DeclareLaunchArgument('use_sim_time', default_value="True")
@@ -78,6 +80,31 @@ def generate_launch_description():
         }.items()
     )
 
+    goal_rotator = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                goal_rotator_wrapper_dir, 
+                "launch", 
+                "goal_rotator.launch.py"
+            ])
+        ), 
+        launch_arguments={
+            "use_sim_time":use_sim_time
+        }.items()
+    )
+
+    velocity_smoother = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                velocity_smoother_dir, 
+                "launch", 
+                "smoother.launch.py"
+            ]), 
+        ), 
+        launch_arguments={
+            "use_sim_time":use_sim_time
+        }.items()
+    )
 
 
     realtime_TS_plotter_node = Node(
@@ -107,18 +134,7 @@ def generate_launch_description():
         condition=IfCondition(plot)
     )
 
-    velocity_smoother = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([
-                velocity_smoother_dir, 
-                "launch", 
-                "smoother.launch.py"
-            ]), 
-        ), 
-        launch_arguments={
-            "use_sim_time":use_sim_time
-        }.items()
-    )
+    
 
     return LaunchDescription([
         declare_use_sim_time, 
@@ -131,5 +147,6 @@ def generate_launch_description():
         realtime_TS_plotter_node, 
         realtime_T_plotter_node, 
         stability_visualizer_node, 
+        goal_rotator, 
         velocity_smoother
     ])

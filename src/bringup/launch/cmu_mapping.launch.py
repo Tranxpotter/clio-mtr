@@ -35,6 +35,7 @@ def generate_launch_description():
     driver_dir = get_package_share_directory("livox_ros_driver2")
     fastlio_dir = get_package_share_directory("fast_lio")
     velocity_smoother_dir = get_package_share_directory("velocity_smoother")
+    goal_rotator_wrapper_dir = get_package_share_directory("goal_rotator_wrapper")
 
     # Declare launch arguments
     declare_use_bag = DeclareLaunchArgument('use_bag', default_value="False")
@@ -163,6 +164,31 @@ def generate_launch_description():
         ]
     )
 
+    goal_rotator = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                goal_rotator_wrapper_dir, 
+                "launch", 
+                "goal_rotator.launch.py"
+            ])
+        ), 
+        launch_arguments={
+            "use_sim_time":use_bag
+        }.items()
+    )
+
+    velocity_smoother = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                velocity_smoother_dir, 
+                "launch", 
+                "smoother.launch.py"
+            ]), 
+        ), 
+        launch_arguments={
+            "use_sim_time":use_bag
+        }.items()
+    )
 
     # Tron control node
     control_node = Node(
@@ -204,18 +230,6 @@ def generate_launch_description():
         condition=IfCondition(plot)
     )
 
-    velocity_smoother = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([
-                velocity_smoother_dir, 
-                "launch", 
-                "smoother.launch.py"
-            ]), 
-        ), 
-        launch_arguments={
-            "use_sim_time":use_bag
-        }.items()
-    )
 
     bag_name = datetime.datetime.now().isoformat(timespec="seconds").replace(":", "_")
     rosbag = ExecuteProcess(
@@ -239,10 +253,11 @@ def generate_launch_description():
     sensor_frame_corrector_node, 
     cmu_group, 
     far_group, 
+    goal_rotator, 
+    velocity_smoother, 
     # control_node, 
     realtime_TS_plotter_node, 
     realtime_T_plotter_node, 
     stability_visualizer_node, 
-    velocity_smoother, 
     rosbag
     ])
