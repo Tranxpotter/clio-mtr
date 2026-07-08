@@ -1,0 +1,5 @@
+string yaml_file_path
+---
+bool success
+string message
+uint32 waypoints_published
