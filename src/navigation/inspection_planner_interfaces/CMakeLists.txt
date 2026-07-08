@@ -12,6 +12,7 @@ find_package(ament_cmake REQUIRED)
 # find_package(<dependency> REQUIRED)
 
 find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -19,7 +20,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ViewPoses.msg"
   "msg/Waypoint.msg"
   "msg/Waypoints.msg"
-  DEPENDENCIES geometry_msgs # Add packages that above messages depend on, in this case geometry_msgs for Sphere.msg
+  "msg/TspDistanceEntry.msg"
+  "msg/TspDistanceMatrix.msg"
+  DEPENDENCIES geometry_msgs std_msgs
 )
 
 if(BUILD_TESTING)
