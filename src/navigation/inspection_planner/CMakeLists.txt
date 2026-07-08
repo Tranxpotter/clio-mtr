@@ -7,9 +7,26 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(inspection_planner_interfaces REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+
+# TSP Solver executable
+add_executable(tsp_solver src/tsp_solver.cpp)
+target_include_directories(tsp_solver PRIVATE include)
+ament_target_dependencies(tsp_solver
+  rclcpp
+  inspection_planner_interfaces
+  geometry_msgs
+  std_msgs
+)
+
+# Install executables
+install(TARGETS
+  tsp_solver
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
