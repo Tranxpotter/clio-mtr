@@ -13,6 +13,7 @@
 #include <inspection_planner_interfaces/msg/waypoint_ids.hpp>
 #include <inspection_planner_interfaces/msg/waypoints.hpp>
 #include <inspection_planner_interfaces/msg/waypoint.hpp>
+#include <inspection_planner_interfaces/srv/solve_tsp.hpp>
 
 class TspSolverNode : public rclcpp::Node
 {
@@ -23,7 +24,9 @@ private:
   // ------------------------------------------------------------------ //
   //  Callbacks
   // ------------------------------------------------------------------ //
-  void on_distance_matrix(const inspection_planner_interfaces::msg::TspDistanceMatrix::SharedPtr msg);
+  void on_service_called(
+    const inspection_planner_interfaces::srv::SolveTsp::Request::SharedPtr request, 
+    inspection_planner_interfaces::srv::SolveTsp::Response::SharedPtr response);
 
   // ------------------------------------------------------------------ //
   //  Matrix normalization
@@ -63,28 +66,13 @@ private:
                         const std::map<std::pair<uint32_t, uint32_t>, double>& dist_map) const;
 
   // ------------------------------------------------------------------ //
-  //  Result publishing
+  //  Attributes
   // ------------------------------------------------------------------ //
-  void publish_result(const std::vector<uint32_t>& order,
-                      const std::vector<uint32_t>& waypoint_ids,
-                      const std::vector<inspection_planner_interfaces::msg::TspDistanceEntry>& entries);
+  rclcpp::Service<inspection_planner_interfaces::srv::SolveTsp>::SharedPtr srv_;
 
-  // ------------------------------------------------------------------ //
-  //  ROS handles
-  // ------------------------------------------------------------------ //
-  rclcpp::Subscription<inspection_planner_interfaces::msg::TspDistanceMatrix>::SharedPtr sub_;
-  rclcpp::Publisher<inspection_planner_interfaces::msg::WaypointIds>::SharedPtr pub_;
-
-  // ------------------------------------------------------------------ //
-  //  Runtime state (set per message)
-  // ------------------------------------------------------------------ //
   uint32_t start_id_;  // Robot's current position ID (reserved value 0)
 
-  // ------------------------------------------------------------------ //
-  //  Parameters
-  // ------------------------------------------------------------------ //
-  std::string input_topic_;
-  std::string output_topic_;
+  std::string service_name_;
   std::string solver_algorithm_;
   int random_seed_;
   int brute_force_max_nodes_;

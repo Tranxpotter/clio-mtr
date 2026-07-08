@@ -11,20 +11,14 @@
 
 #include "inspection_planner/tsp_solver.hpp"
 
-// ------------------------------------------------------------------ //
-//  Constructor — parameter declaration & subscriber/publisher setup
-// ------------------------------------------------------------------ //
+
 TspSolverNode::TspSolverNode()
 : Node("tsp_solver_node")
 {
   // ---- Declare parameters with descriptors ----
-  auto input_topic_desc = rcl_interfaces::msg::ParameterDescriptor();
-  input_topic_desc.description = "Input TSP distance matrix topic";
-  this->declare_parameter<std::string>("input_topic", "/tsp_distance_matrix", input_topic_desc);
-
-  auto output_topic_desc = rcl_interfaces::msg::ParameterDescriptor();
-  output_topic_desc.description = "Output ordered waypoints topic";
-  this->declare_parameter<std::string>("output_topic", "/tsp_optimal_waypoints", output_topic_desc);
+  auto service_name_desc = rcl_interfaces::msg::ParameterDescriptor();
+  service_name_desc.description = "Input TSP distance matrix topic";
+  this->declare_parameter<std::string>("service_name", "/tsp_solver", service_name_desc);
 
   auto solver_algorithm_desc = rcl_interfaces::msg::ParameterDescriptor();
   solver_algorithm_desc.description =
@@ -50,36 +44,32 @@ TspSolverNode::TspSolverNode()
   this->declare_parameter<int>("qos_depth", 1, qos_depth_desc);
 
   // ---- Read parameter values ----
-  input_topic_        = this->get_parameter("input_topic").as_string();
-  output_topic_       = this->get_parameter("output_topic").as_string();
+  service_name_        = this->get_parameter("service_name_").as_string();
   solver_algorithm_   = this->get_parameter("solver_algorithm").as_string();
   random_seed_        = this->get_parameter("random_seed").as_int();
   brute_force_max_nodes_ = this->get_parameter("brute_force_max_nodes").as_int();
   symmetry_tolerance_ = this->get_parameter("symmetry_tolerance").as_double();
   qos_depth_          = this->get_parameter("qos_depth").as_int();
 
-  // ---- Create subscriber & publisher ----
-  sub_ = this->create_subscription<inspection_planner_interfaces::msg::TspDistanceMatrix>(
-    input_topic_, qos_depth_,
-    std::bind(&TspSolverNode::on_distance_matrix, this, std::placeholders::_1));
 
-  pub_ = this->create_publisher<inspection_planner_interfaces::msg::WaypointIds>(
-    output_topic_, qos_depth_);
+  srv_ = this->create_service<inspection_planner_interfaces::srv::SolveTsp>(
+    "/solve_tsp", std::bind(&TspSolverNode::on_service_called, this, std::placeholders::_1, std::placeholders::_2));
 
   RCLCPP_INFO(this->get_logger(),
-    "TSP Solver started — algorithm=%s, input=%s, output=%s",
-    solver_algorithm_.c_str(), input_topic_.c_str(), output_topic_.c_str());
+    "TSP Solver started — algorithm=%s, service=%s",
+    solver_algorithm_.c_str(), service_name_.c_str());
 }
 
-// ------------------------------------------------------------------ //
-//  Main callback — entry point when a new distance matrix arrives
-// ------------------------------------------------------------------ //
-void TspSolverNode::on_distance_matrix(
-  const inspection_planner_interfaces::msg::TspDistanceMatrix::SharedPtr msg)
+
+
+void TspSolverNode::on_service_called(
+  const inspection_planner_interfaces::srv::SolveTsp::Request::SharedPtr request, 
+  inspection_planner_interfaces::srv::SolveTsp::Response::SharedPtr response
+)
 {
-  start_id_      = msg->start_id;
-  auto waypoint_ids = msg->waypoint_ids;
-  auto entries      = msg->entries;
+  start_id_      = request->matrix.start_id;
+  auto waypoint_ids = request->matrix.waypoint_ids;
+  auto entries      = request->matrix.entries;
 
   RCLCPP_INFO(this->get_logger(),
     "Received distance matrix: start_id=%u, %lu waypoint IDs, %lu entries",
@@ -93,10 +83,9 @@ void TspSolverNode::on_distance_matrix(
 
   if (waypoint_ids.size() == 1) {
     RCLCPP_INFO(this->get_logger(), "TSP: single waypoint (%u), publishing as-is.", waypoint_ids[0]);
-    inspection_planner_interfaces::msg::WaypointIds result;
-    result.ids.reserve(1);
-    result.ids.push_back(waypoint_ids[0]);
-    pub_->publish(result);
+    response->ordered_waypoint_ids.reserve(1);
+    response->ordered_waypoint_ids.push_back(waypoint_ids[0]);
+    response->success = true;
     return;
   }
 
@@ -122,12 +111,31 @@ void TspSolverNode::on_distance_matrix(
   }
 
   // ---- Publish the result ----
-  publish_result(order, waypoint_ids, entries);
+  // Build a lookup from the original entries to find waypoint positions
+  // (the TspDistanceMatrix doesn't carry positions, so we only output IDs)
+  response->ordered_waypoint_ids.reserve(order.size());
+
+  for (const auto& id : order) {
+    response->ordered_waypoint_ids.push_back(id);
+  }
+
+  // Log the full path including robot start
+  std::string order_str = "TSP path: robot(" + std::to_string(start_id_) + ") -> ";
+  for (size_t i = 0; i < order.size(); ++i) {
+    order_str += std::to_string(order[i]);
+    if (i + 1 < order.size()) order_str += " -> ";
+  }
+  RCLCPP_INFO(this->get_logger(), "%s", order_str.c_str());
+
+  // Log the open-path cost
+  double cost = open_tour_cost(order, dist_map);
+  RCLCPP_INFO(this->get_logger(), "TSP open-path cost = %.4f", cost);
+
+  RCLCPP_INFO(this->get_logger(), "Responded with %lu ordered waypoint ids.",
+    response->ordered_waypoint_ids.size());
 }
 
-// ------------------------------------------------------------------ //
-//  Matrix normalization
-// ------------------------------------------------------------------ //
+
 bool TspSolverNode::normalize_matrix(
   const std::vector<uint32_t>& waypoint_ids,
   const std::vector<inspection_planner_interfaces::msg::TspDistanceEntry>& entries,
@@ -432,52 +440,9 @@ double TspSolverNode::open_tour_cost(
   return cost;
 }
 
-// ------------------------------------------------------------------ //
-//  Publish result
-// ------------------------------------------------------------------ //
-void TspSolverNode::publish_result(
-  const std::vector<uint32_t>& order,
-  const std::vector<uint32_t>& /* waypoint_ids */,
-  const std::vector<inspection_planner_interfaces::msg::TspDistanceEntry>& entries)
-{
-  // Build a lookup from the original entries to find waypoint positions
-  // (the TspDistanceMatrix doesn't carry positions, so we only output IDs)
-  inspection_planner_interfaces::msg::WaypointIds result;
-  result.ids.reserve(order.size());
 
-  for (const auto& id : order) {
-    result.ids.push_back(id);
-  }
 
-  // Compute and log the open-path cost for logging purposes
-  std::map<std::pair<uint32_t, uint32_t>, double> dist_map;
-  for (const auto& e : entries) {
-    auto key = std::make_pair(e.source_id, e.target_id);
-    if (dist_map.find(key) == dist_map.end()) {
-      dist_map[key] = e.distance;
-    }
-  }
 
-  // Log the full path including robot start
-  std::string order_str = "TSP path: robot(" + std::to_string(start_id_) + ") -> ";
-  for (size_t i = 0; i < order.size(); ++i) {
-    order_str += std::to_string(order[i]);
-    if (i + 1 < order.size()) order_str += " -> ";
-  }
-  RCLCPP_INFO(this->get_logger(), "%s", order_str.c_str());
-
-  // Log the open-path cost
-  double cost = open_tour_cost(order, dist_map);
-  RCLCPP_INFO(this->get_logger(), "TSP open-path cost = %.4f", cost);
-
-  pub_->publish(result);
-  RCLCPP_INFO(this->get_logger(), "Published %lu ordered waypoint ids to %s",
-    result.ids.size(), output_topic_.c_str());
-}
-
-// ------------------------------------------------------------------ //
-//  Main
-// ------------------------------------------------------------------ //
 int main(int argc, char** argv)
 {
   rclcpp::init(argc, argv);
