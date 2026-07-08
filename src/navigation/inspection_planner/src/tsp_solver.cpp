@@ -77,12 +77,13 @@ TspSolverNode::TspSolverNode()
 void TspSolverNode::on_distance_matrix(
   const inspection_planner_interfaces::msg::TspDistanceMatrix::SharedPtr msg)
 {
+  start_id_      = msg->start_id;
   auto waypoint_ids = msg->waypoint_ids;
   auto entries      = msg->entries;
 
   RCLCPP_INFO(this->get_logger(),
-    "Received distance matrix: %lu waypoint IDs, %lu entries",
-    waypoint_ids.size(), entries.size());
+    "Received distance matrix: start_id=%u, %lu waypoint IDs, %lu entries",
+    start_id_, waypoint_ids.size(), entries.size());
 
   // ---- Handle trivial cases ----
   if (waypoint_ids.empty()) {
@@ -204,7 +205,7 @@ bool TspSolverNode::normalize_matrix(
 }
 
 // ------------------------------------------------------------------ //
-//  Nearest-neighbor greedy heuristic
+//  Nearest-neighbor greedy heuristic (open path from robot position)
 // ------------------------------------------------------------------ //
 std::vector<uint32_t> TspSolverNode::solve_nearest_neighbor(
   const std::vector<uint32_t>& waypoint_ids,
@@ -214,13 +215,32 @@ std::vector<uint32_t> TspSolverNode::solve_nearest_neighbor(
   std::unordered_set<uint32_t> visited;
   order.reserve(waypoint_ids.size());
 
-  uint32_t current = waypoint_ids[0];  // deterministic start
-  visited.insert(current);
-  order.push_back(current);
+  // Start from the robot's position (start_id_) — pick the nearest unvisited waypoint
+  uint32_t current = start_id_;
+  double best_dist = std::numeric_limits<double>::max();
+  uint32_t best_next = 0;
+
+  for (const auto& wp : waypoint_ids) {
+    auto key = std::make_pair(current, wp);
+    auto it  = dist_map.find(key);
+    if (it != dist_map.end() && it->second < best_dist) {
+      best_dist = it->second;
+      best_next = wp;
+    }
+  }
+
+  if (best_next == 0) {
+    RCLCPP_WARN(this->get_logger(), "TSP: nearest_neighbor cannot reach any waypoint from robot (start_id=%u).", current);
+    return order;
+  }
+
+  visited.insert(best_next);
+  order.push_back(best_next);
+  current = best_next;
 
   while (order.size() < waypoint_ids.size()) {
-    double best_dist = std::numeric_limits<double>::max();
-    uint32_t best_next = 0;
+    best_dist = std::numeric_limits<double>::max();
+    best_next = 0;
 
     for (const auto& wp : waypoint_ids) {
       if (visited.count(wp)) continue;
@@ -247,34 +267,48 @@ std::vector<uint32_t> TspSolverNode::solve_nearest_neighbor(
 }
 
 // ------------------------------------------------------------------ //
-//  Random-start nearest-neighbor
+//  Random-start nearest-neighbor (open path from robot position)
 // ------------------------------------------------------------------ //
 std::vector<uint32_t> TspSolverNode::solve_random_nearest(
   const std::vector<uint32_t>& waypoint_ids,
   const std::map<std::pair<uint32_t, uint32_t>, double>& dist_map)
 {
   std::mt19937 rng(random_seed_);
-  std::uniform_int_distribution<size_t> dist(0, waypoint_ids.size() - 1);
 
-  // Shuffle a copy of waypoint IDs to pick a random start
-  std::vector<uint32_t> shuffled_ids = waypoint_ids;
-  std::shuffle(shuffled_ids.begin(), shuffled_ids.end(), rng);
-  uint32_t random_start = shuffled_ids[dist(rng)];
+  // First step: deterministically pick the nearest waypoint from the robot (start_id_)
+  double best_dist = std::numeric_limits<double>::max();
+  uint32_t best_next = 0;
 
-  RCLCPP_INFO(this->get_logger(), "TSP: random_nearest starting from node %u (seed=%d)", random_start, random_seed_);
+  for (const auto& wp : waypoint_ids) {
+    auto key = std::make_pair(start_id_, wp);
+    auto it  = dist_map.find(key);
+    if (it != dist_map.end() && it->second < best_dist) {
+      best_dist = it->second;
+      best_next = wp;
+    }
+  }
 
-  // Reuse nearest-neighbor logic but with a custom start
+  if (best_next == 0) {
+    RCLCPP_WARN(this->get_logger(), "TSP: random_nearest cannot reach any waypoint from robot (start_id=%u).", start_id_);
+    return {};
+  }
+
+  RCLCPP_INFO(this->get_logger(),
+    "TSP: random_nearest starting from robot (start_id=%u) → first waypoint %u (seed=%d)",
+    start_id_, best_next, random_seed_);
+
+  // Build the rest of the path using nearest-neighbor
   std::vector<uint32_t> order;
   std::unordered_set<uint32_t> visited;
   order.reserve(waypoint_ids.size());
 
-  uint32_t current = random_start;
-  visited.insert(current);
-  order.push_back(current);
+  visited.insert(best_next);
+  order.push_back(best_next);
+  uint32_t current = best_next;
 
   while (order.size() < waypoint_ids.size()) {
-    double best_dist = std::numeric_limits<double>::max();
-    uint32_t best_next = 0;
+    best_dist = std::numeric_limits<double>::max();
+    best_next = 0;
 
     for (const auto& wp : waypoint_ids) {
       if (visited.count(wp)) continue;
@@ -326,19 +360,20 @@ std::vector<uint32_t> TspSolverNode::solve_brute_force(
   std::sort(ids.begin(), ids.end());  // deterministic iteration order
 
   do {
-    double cost = tour_cost(ids, dist_map);
+    // Use open-path cost: start_id → wp[0] → wp[1] → ... → wp[n-1] (no return leg)
+    double cost = open_tour_cost(ids, dist_map);
     if (cost < best_cost) {
       best_cost = cost;
       best_order = ids;
     }
   } while (std::next_permutation(ids.begin(), ids.end()));
 
-  RCLCPP_INFO(this->get_logger(), "TSP: brute_force best tour cost = %.4f", best_cost);
+  RCLCPP_INFO(this->get_logger(), "TSP: brute_force best open-path cost = %.4f", best_cost);
   return best_order;
 }
 
 // ------------------------------------------------------------------ //
-//  Tour cost helper
+//  Tour cost helper (closed tour — returns to start)
 // ------------------------------------------------------------------ //
 double TspSolverNode::tour_cost(
   const std::vector<uint32_t>& order,
@@ -360,6 +395,44 @@ double TspSolverNode::tour_cost(
 }
 
 // ------------------------------------------------------------------ //
+//  Open-path cost: start_id → wp[0] → wp[1] → ... → wp[n-1]
+// ------------------------------------------------------------------ //
+double TspSolverNode::open_tour_cost(
+  const std::vector<uint32_t>& order,
+  const std::map<std::pair<uint32_t, uint32_t>, double>& dist_map) const
+{
+  if (order.empty()) return 0.0;
+
+  double cost = 0.0;
+
+  // Leg 1: robot (start_id_) → first waypoint
+  {
+    auto key = std::make_pair(start_id_, order[0]);
+    auto it  = dist_map.find(key);
+    if (it != dist_map.end()) {
+      cost += it->second;
+    } else {
+      cost += std::numeric_limits<double>::max();  // unreachable
+    }
+  }
+
+  // Legs 2..n: wp[i] → wp[i+1]
+  for (size_t i = 0; i + 1 < order.size(); ++i) {
+    uint32_t from = order[i];
+    uint32_t to   = order[i + 1];
+    auto key = std::make_pair(from, to);
+    auto it  = dist_map.find(key);
+    if (it != dist_map.end()) {
+      cost += it->second;
+    } else {
+      cost += std::numeric_limits<double>::max();  // unreachable
+    }
+  }
+
+  return cost;
+}
+
+// ------------------------------------------------------------------ //
 //  Publish result
 // ------------------------------------------------------------------ //
 void TspSolverNode::publish_result(
@@ -376,7 +449,7 @@ void TspSolverNode::publish_result(
     result.ids.push_back(id);
   }
 
-  // Compute and log the tour cost for logging purposes
+  // Compute and log the open-path cost for logging purposes
   std::map<std::pair<uint32_t, uint32_t>, double> dist_map;
   for (const auto& e : entries) {
     auto key = std::make_pair(e.source_id, e.target_id);
@@ -385,13 +458,17 @@ void TspSolverNode::publish_result(
     }
   }
 
-  // Log the order
-  std::string order_str = "TSP optimal order: ";
+  // Log the full path including robot start
+  std::string order_str = "TSP path: robot(" + std::to_string(start_id_) + ") -> ";
   for (size_t i = 0; i < order.size(); ++i) {
     order_str += std::to_string(order[i]);
     if (i + 1 < order.size()) order_str += " -> ";
   }
   RCLCPP_INFO(this->get_logger(), "%s", order_str.c_str());
+
+  // Log the open-path cost
+  double cost = open_tour_cost(order, dist_map);
+  RCLCPP_INFO(this->get_logger(), "TSP open-path cost = %.4f", cost);
 
   pub_->publish(result);
   RCLCPP_INFO(this->get_logger(), "Published %lu ordered waypoint ids to %s",

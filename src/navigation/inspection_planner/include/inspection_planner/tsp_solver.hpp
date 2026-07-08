@@ -54,9 +54,13 @@ private:
     const std::vector<uint32_t>& waypoint_ids,
     const std::map<std::pair<uint32_t, uint32_t>, double>& dist_map);
 
-  /// Compute total tour cost for a given ordering.
+  /// Compute total tour cost for a given ordering (closed tour — returns to start).
   double tour_cost(const std::vector<uint32_t>& order,
                    const std::map<std::pair<uint32_t, uint32_t>, double>& dist_map) const;
+
+  /// Compute open-path cost: start_id → wp[0] → wp[1] → ... → wp[n-1] (no return leg).
+  double open_tour_cost(const std::vector<uint32_t>& order,
+                        const std::map<std::pair<uint32_t, uint32_t>, double>& dist_map) const;
 
   // ------------------------------------------------------------------ //
   //  Result publishing
@@ -70,6 +74,11 @@ private:
   // ------------------------------------------------------------------ //
   rclcpp::Subscription<inspection_planner_interfaces::msg::TspDistanceMatrix>::SharedPtr sub_;
   rclcpp::Publisher<inspection_planner_interfaces::msg::WaypointIds>::SharedPtr pub_;
+
+  // ------------------------------------------------------------------ //
+  //  Runtime state (set per message)
+  // ------------------------------------------------------------------ //
+  uint32_t start_id_;  // Robot's current position ID (reserved value 0)
 
   // ------------------------------------------------------------------ //
   //  Parameters
