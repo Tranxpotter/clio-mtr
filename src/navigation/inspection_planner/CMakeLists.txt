@@ -8,9 +8,11 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(inspection_planner_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 # TSP Solver executable
 add_executable(tsp_solver src/tsp_solver.cpp)
@@ -21,6 +23,20 @@ ament_target_dependencies(tsp_solver
   geometry_msgs
   std_msgs
 )
+
+# Inspection Planner executable
+add_executable(inspection_planner src/inspection_planner.cpp)
+target_include_directories(inspection_planner PRIVATE include)
+ament_target_dependencies(inspection_planner
+  rclcpp
+  rclcpp_action
+  inspection_planner_interfaces
+  geometry_msgs
+  std_msgs
+  std_srvs
+)
+
+
 
 # Install executables
 install(TARGETS

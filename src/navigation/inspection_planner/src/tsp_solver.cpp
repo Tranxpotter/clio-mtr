@@ -18,7 +18,7 @@ TspSolverNode::TspSolverNode()
   // ---- Declare parameters with descriptors ----
   auto service_name_desc = rcl_interfaces::msg::ParameterDescriptor();
   service_name_desc.description = "Input TSP distance matrix topic";
-  this->declare_parameter<std::string>("service_name", "/tsp_solver", service_name_desc);
+  this->declare_parameter<std::string>("service_name", "/solve_tsp", service_name_desc);
 
   auto solver_algorithm_desc = rcl_interfaces::msg::ParameterDescriptor();
   solver_algorithm_desc.description =

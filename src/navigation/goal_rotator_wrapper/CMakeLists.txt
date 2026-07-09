@@ -8,6 +8,7 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(rcl_interfaces REQUIRED)
@@ -15,6 +16,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(inspection_planner_interfaces)
 
 
 
@@ -26,6 +28,7 @@ target_compile_features(goal_rotator_node PUBLIC c_std_99 cxx_std_17)  # Require
 
 ament_target_dependencies(goal_rotator_node
   rclcpp
+  rclcpp_action
   geometry_msgs
   std_msgs
   rcl_interfaces
@@ -33,6 +36,7 @@ ament_target_dependencies(goal_rotator_node
   tf2_ros
   tf2_geometry_msgs
   nav_msgs
+  inspection_planner_interfaces
 )
 
 install(TARGETS goal_rotator_node

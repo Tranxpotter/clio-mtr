@@ -10,7 +10,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <inspection_planner_interfaces/msg/tsp_distance_matrix.hpp>
 #include <inspection_planner_interfaces/msg/tsp_distance_entry.hpp>
-#include <inspection_planner_interfaces/msg/waypoint_ids.hpp>
 #include <inspection_planner_interfaces/msg/waypoints.hpp>
 #include <inspection_planner_interfaces/msg/waypoint.hpp>
 #include <inspection_planner_interfaces/srv/solve_tsp.hpp>

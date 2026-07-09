@@ -6,6 +6,7 @@
 #include <chrono>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
@@ -21,6 +22,8 @@
 
 #include "nav_msgs/msg/odometry.hpp"
 
+#include <inspection_planner_interfaces/action/nav_to_pose.hpp>
+
 
 
 class GoalRotatorNode : public rclcpp::Node
@@ -33,6 +36,10 @@ class GoalRotatorNode : public rclcpp::Node
             auto pose_topic_desc = rcl_interfaces::msg::ParameterDescriptor();
             pose_topic_desc.description = "Navigation goal pose topic [geometry_msgs/msg/PoseStamped]";
             this->declare_parameter<std::string>("pose_topic", "/goal_pose", pose_topic_desc);
+
+            auto pose_server_desc = rcl_interfaces::msg::ParameterDescriptor();
+            pose_server_desc.description = "Navigation goal pose action server [inspection_planner_interfaces/action/NavToPose]";
+            this->declare_parameter<std::string>("pose_server", "/nav_to_pose", pose_server_desc);
 
             auto goal_point_topic_desc = rcl_interfaces::msg::ParameterDescriptor();
             goal_point_topic_desc.description = "FAR Planner goal point topic [geometry_msgs/msg/PoseStamped]";
@@ -85,6 +92,7 @@ class GoalRotatorNode : public rclcpp::Node
 
             /* Get parameter values */
             this->pose_topic_ = this->get_parameter("pose_topic").as_string();
+            this->pose_server_name_ = this->get_parameter("pose_server").as_string();
             this->goal_point_topic_ = this->get_parameter("goal_point_topic").as_string();
             this->planner_status_topic_ = this->get_parameter("planner_status_topic").as_string();
             this->planner_cmd_vel_topic_ = this->get_parameter("planner_cmd_vel_topic").as_string();
@@ -100,6 +108,13 @@ class GoalRotatorNode : public rclcpp::Node
 
             /* Create subscribers and publishers */
             pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(pose_topic_, 1, std::bind(&GoalRotatorNode::on_receive_pose_, this, std::placeholders::_1));
+            pose_server_ = rclcpp_action::create_server<inspection_planner_interfaces::action::NavToPose>(
+                this,  
+                pose_server_name_, 
+                std::bind(&GoalRotatorNode::server_handle_pose_, this, std::placeholders::_1, std::placeholders::_2), 
+                std::bind(&GoalRotatorNode::server_handle_cancel, this, std::placeholders::_1), 
+                std::bind(&GoalRotatorNode::server_handle_accepted, this, std::placeholders::_1)
+            );
             goal_point_pub_ = this->create_publisher<geometry_msgs::msg::PointStamped>(goal_point_topic_, 1);
             planner_status_sub_ = this->create_subscription<std_msgs::msg::Bool>(planner_status_topic_, 5, std::bind(&GoalRotatorNode::on_receive_status, this, std::placeholders::_1));
             if (!use_stamped_cmd_vel_) {
@@ -122,6 +137,7 @@ class GoalRotatorNode : public rclcpp::Node
     private:
         // Node parameters
         std::string pose_topic_;
+        std::string pose_server_name_;
         std::string goal_point_topic_;
         std::string planner_status_topic_;
         std::string planner_cmd_vel_topic_;
@@ -137,6 +153,7 @@ class GoalRotatorNode : public rclcpp::Node
 
         // Subscribers and publishers
         std::shared_ptr<rclcpp::Subscription<geometry_msgs::msg::PoseStamped>> pose_sub_;
+        rclcpp_action::Server<inspection_planner_interfaces::action::NavToPose>::SharedPtr pose_server_;
         std::shared_ptr<rclcpp::Publisher<geometry_msgs::msg::PointStamped>> goal_point_pub_;
         std::shared_ptr<rclcpp::Subscription<std_msgs::msg::Bool>> planner_status_sub_;
         std::shared_ptr<rclcpp::Subscription<geometry_msgs::msg::Twist>> cmd_vel_sub_;
@@ -152,12 +169,27 @@ class GoalRotatorNode : public rclcpp::Node
         // States
         const int IDLE = 0, NAVIGATING = 1, ROTATING = 2;
         int state = 0;
+        bool is_pose_from_server = false;
+        std::shared_ptr<rclcpp_action::ServerGoalHandle<inspection_planner_interfaces::action::NavToPose>> server_goal_handle;
 
-        std::shared_ptr<geometry_msgs::msg::PoseStamped> goal_pose_;
+        geometry_msgs::msg::PoseStamped goal_pose_;
         std::shared_ptr<nav_msgs::msg::Odometry> odom_;
         std::string odom_frame = "";
         std::string robot_frame = "";
         geometry_msgs::msg::Twist curr_output_vel;
+
+        /**
+         * @brief Get the goal point from pose object
+         * 
+         * @param pose [in] goal pose
+         * @param point [out] result goal point
+         */
+        void get_goal_point_from_pose(const geometry_msgs::msg::PoseStamped &pose, geometry_msgs::msg::PointStamped &point){
+            point.header = pose.header;
+            point.point.x = pose.pose.position.x;
+            point.point.y = pose.pose.position.y;
+            point.point.z = pose.pose.position.z;
+        }
 
         /**
          * @brief Goal Pose callback, update state and publish goal point
@@ -165,20 +197,75 @@ class GoalRotatorNode : public rclcpp::Node
          * @param msg 
          */
         void on_receive_pose_(std::shared_ptr<geometry_msgs::msg::PoseStamped> msg){
-            goal_pose_ = msg;
-            auto goal_x = msg->pose.position.x;
-            auto goal_y = msg->pose.position.y;
-            auto goal_z = msg->pose.position.z;
+            goal_pose_ = *msg;
+            is_pose_from_server = false;
 
             auto goal_point = geometry_msgs::msg::PointStamped();
-            goal_point.header = msg->header;
-            goal_point.point.x = goal_x;
-            goal_point.point.y = goal_y;
-            goal_point.point.z = goal_z;
+            get_goal_point_from_pose(*msg, goal_point);
             goal_point_pub_->publish(goal_point);
 
             state = NAVIGATING;
         }
+
+        /**
+         * @brief Action server callback, update state and publish goal point
+         * 
+         * @param uuid 
+         * @param goal 
+         * @return rclcpp_action::GoalResponse 
+         */
+        rclcpp_action::GoalResponse server_handle_pose_(
+            const rclcpp_action::GoalUUID & uuid, 
+            inspection_planner_interfaces::action::NavToPose::Goal::ConstSharedPtr goal)
+        {
+            (void)uuid;
+            goal_pose_ = goal->pose;
+
+            auto goal_point = geometry_msgs::msg::PointStamped();
+            get_goal_point_from_pose(goal->pose, goal_point);
+            goal_point_pub_->publish(goal_point);
+            state = NAVIGATING;
+            return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        }
+
+        /**
+         * @brief Cancel goal, send goal_point to robot odom to stop navigation
+         * 
+         * @param goal_handle 
+         * @return rclcpp_action::CancelResponse 
+         */
+        rclcpp_action::CancelResponse server_handle_cancel(
+            const std::shared_ptr<rclcpp_action::ServerGoalHandle<inspection_planner_interfaces::action::NavToPose>> goal_handle
+        )
+        {
+            (void)goal_handle;
+            auto goal_point = geometry_msgs::msg::PointStamped();
+            goal_point.header = goal_pose_.header;
+            goal_point.point.x = odom_->pose.pose.position.x;
+            goal_point.point.y = odom_->pose.pose.position.y;
+            goal_point.point.z = odom_->pose.pose.position.z;
+            goal_point_pub_->publish(goal_point);
+
+            state = IDLE;
+            return rclcpp_action::CancelResponse::ACCEPT;
+        }
+
+        void server_handle_accepted(
+            const std::shared_ptr<rclcpp_action::ServerGoalHandle<inspection_planner_interfaces::action::NavToPose>> goal_handle
+        )
+        {
+            is_pose_from_server = true;
+            server_goal_handle = goal_handle;
+            auto feedback = std::make_shared<inspection_planner_interfaces::action::NavToPose::Feedback>();
+            feedback->state = NAVIGATING;
+            server_goal_handle->publish_feedback(feedback);
+        }
+
+
+
+
+
+        
 
         /**
          * @brief Update state, start rotation if reached goal
@@ -187,9 +274,14 @@ class GoalRotatorNode : public rclcpp::Node
          */
         void on_receive_status(std::shared_ptr<std_msgs::msg::Bool> msg){
             if (!msg->data) return;
-            if (state != ROTATING){
+            if (state == NAVIGATING){
                 state = ROTATING;
                 RCLCPP_INFO(this->get_logger(), "Done navigation, switching to ROTATING");
+                if (is_pose_from_server){
+                    auto feedback = std::make_shared<inspection_planner_interfaces::action::NavToPose::Feedback>();
+                    feedback->state = ROTATING;
+                    server_goal_handle->publish_feedback(feedback);
+                }
             }
         }
 
@@ -215,14 +307,9 @@ class GoalRotatorNode : public rclcpp::Node
             odom_ = msg;
 
             if (state == ROTATING){
-                if (!goal_pose_) {
-                    RCLCPP_WARN(this->get_logger(), "State is ROTATING but goal_pose_ is null! Switching back to IDLE");
-                    state = IDLE;
-                    return;
-                }
                 // Convert goal pose to odom frame
                 geometry_msgs::msg::PoseStamped transformed_goal_pose;
-                convert_goal_pose_frame(*goal_pose_, transformed_goal_pose);
+                convert_goal_pose_frame(goal_pose_, transformed_goal_pose);
                 double target_yaw = tf2::getYaw(transformed_goal_pose.pose.orientation);
 
                 geometry_msgs::msg::Quaternion robot_quaternion = odom_->pose.pose.orientation;
@@ -234,8 +321,15 @@ class GoalRotatorNode : public rclcpp::Node
                     state = IDLE;
                     curr_output_vel = geometry_msgs::msg::Twist();
                     RCLCPP_INFO(this->get_logger(), "Done ROTATING, now IDLE");
-                    // TODO: Action server finish pub
 
+                    // pub action server result
+                    if (is_pose_from_server){
+                        auto result = std::make_shared<inspection_planner_interfaces::action::NavToPose::Result>();
+                        result->result = true;
+                        server_goal_handle->succeed(result);
+
+                        is_pose_from_server = false;
+                    }
                     return;
                 }
                 double cmd_vel_angular_z = kp_*yaw_diff;

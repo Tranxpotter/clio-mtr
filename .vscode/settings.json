@@ -10,5 +10,6 @@
         "/opt/ros/humble/local/lib/python3.10/dist-packages",
         "${workspaceFolder}/install/interface/local/lib/python3.10/dist-packages"
     ],
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "todo-tree.ripgrep.ripgrep": "/usr/bin/rg"
 }
