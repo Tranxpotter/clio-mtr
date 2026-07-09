@@ -81,14 +81,20 @@ def generate_launch_description():
 
     waypoint_publisher = Node(
         package="inspection_planner_test", 
-        executable="waypoint_publisher_service", 
-        name="waypoint_publisher_service"
+        executable="viewpose_publisher_service", 
+        name="viewpose_publisher_service"
     )
 
     tsp_solver = Node(
         package="inspection_planner", 
         executable="tsp_solver", 
         name="tsp_solver"
+    )
+
+    inspection_planner = Node(
+        package="inspection_planner", 
+        executable="inspection_planner", 
+        name="inspection_planner"
     )
 
 
@@ -105,5 +111,6 @@ def generate_launch_description():
     
     nav, 
     waypoint_publisher, 
-    tsp_solver
+    tsp_solver, 
+    inspection_planner
     ])

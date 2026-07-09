@@ -44,7 +44,7 @@ TspSolverNode::TspSolverNode()
   this->declare_parameter<int>("qos_depth", 1, qos_depth_desc);
 
   // ---- Read parameter values ----
-  service_name_        = this->get_parameter("service_name_").as_string();
+  service_name_        = this->get_parameter("service_name").as_string();
   solver_algorithm_   = this->get_parameter("solver_algorithm").as_string();
   random_seed_        = this->get_parameter("random_seed").as_int();
   brute_force_max_nodes_ = this->get_parameter("brute_force_max_nodes").as_int();
@@ -118,6 +118,7 @@ void TspSolverNode::on_service_called(
   for (const auto& id : order) {
     response->ordered_waypoint_ids.push_back(id);
   }
+  response->success = true;
 
   // Log the full path including robot start
   std::string order_str = "TSP path: robot(" + std::to_string(start_id_) + ") -> ";

@@ -24,8 +24,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            "goal_point_recorder = inspection_planner_test.goal_point_recorder:main", 
-            "waypoint_publisher_service = inspection_planner_test.waypoint_publisher_service:main"
+            "goal_point_recorder = inspection_planner_test.goal_point_recorder:main",
+            "goal_pose_recorder = inspection_planner_test.goal_pose_recorder:main",
+            "waypoint_publisher_service = inspection_planner_test.waypoint_publisher_service:main",
+            "viewpose_publisher_service = inspection_planner_test.viewpose_publisher_service:main"
         ],
     },
 )

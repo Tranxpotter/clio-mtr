@@ -31,11 +31,11 @@ InspectionPlannerNode::InspectionPlannerNode()
     // Other parameters
     auto pose_merge_distance_tolerance_desc = rcl_interfaces::msg::ParameterDescriptor();
     pose_merge_distance_tolerance_desc.description = "Poses within tolerance will be considered as the same. Both dist and angular tolerance must be passed.";
-    this->declare_parameter<std::string>("pose_merge_distance_tolerance", "0.1", pose_merge_distance_tolerance_desc);
+    this->declare_parameter<double>("pose_merge_distance_tolerance", 0.1, pose_merge_distance_tolerance_desc);
 
     auto pose_merge_angular_tolerance_desc = rcl_interfaces::msg::ParameterDescriptor();
     pose_merge_angular_tolerance_desc.description = "Poses within tolerance will be considered as the same. Both dist and angular tolerance must be passed.";
-    this->declare_parameter<std::string>("pose_merge_angular_tolerance", "0.1", pose_merge_angular_tolerance_desc);
+    this->declare_parameter<double>("pose_merge_angular_tolerance", 0.1, pose_merge_angular_tolerance_desc);
 
     // Get parameters
     inspection_poses_sub_topic_ = this->get_parameter("inspection_poses_topic").as_string();
