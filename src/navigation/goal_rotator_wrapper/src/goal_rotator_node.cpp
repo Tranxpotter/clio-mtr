@@ -199,6 +199,7 @@ class GoalRotatorNode : public rclcpp::Node
         void on_receive_pose_(std::shared_ptr<geometry_msgs::msg::PoseStamped> msg){
             goal_pose_ = *msg;
             is_pose_from_server = false;
+            RCLCPP_INFO(this->get_logger(), "Received goal pose from message. Navigating to pose...");
 
             auto goal_point = geometry_msgs::msg::PointStamped();
             get_goal_point_from_pose(*msg, goal_point);
@@ -220,11 +221,7 @@ class GoalRotatorNode : public rclcpp::Node
         {
             (void)uuid;
             goal_pose_ = goal->pose;
-
-            auto goal_point = geometry_msgs::msg::PointStamped();
-            get_goal_point_from_pose(goal->pose, goal_point);
-            goal_point_pub_->publish(goal_point);
-            state = NAVIGATING;
+            RCLCPP_INFO(this->get_logger(), "Received goal pose from server. Accepting goal...");
             return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
         }
 
@@ -255,9 +252,17 @@ class GoalRotatorNode : public rclcpp::Node
         )
         {
             is_pose_from_server = true;
+            RCLCPP_INFO(this->get_logger(), "Goal accepted, navigating to pose...");
+
             server_goal_handle = goal_handle;
             auto feedback = std::make_shared<inspection_planner_interfaces::action::NavToPose::Feedback>();
             feedback->state = NAVIGATING;
+
+            auto goal_point = geometry_msgs::msg::PointStamped();
+            get_goal_point_from_pose(goal_pose_, goal_point);
+            state = NAVIGATING;
+            goal_point_pub_->publish(goal_point);
+
             server_goal_handle->publish_feedback(feedback);
         }
 
@@ -276,7 +281,7 @@ class GoalRotatorNode : public rclcpp::Node
             if (!msg->data) return;
             if (state == NAVIGATING){
                 state = ROTATING;
-                RCLCPP_INFO(this->get_logger(), "Done navigation, switching to ROTATING");
+                RCLCPP_INFO(this->get_logger(), "Done navigation, switching to ROTATING. Pose from server: %d", is_pose_from_server);
                 if (is_pose_from_server){
                     auto feedback = std::make_shared<inspection_planner_interfaces::action::NavToPose::Feedback>();
                     feedback->state = ROTATING;
@@ -320,7 +325,7 @@ class GoalRotatorNode : public rclcpp::Node
                 if (abs(yaw_diff) <= (angle_tolerance_ / 180.0 * 3.1415926)){
                     state = IDLE;
                     curr_output_vel = geometry_msgs::msg::Twist();
-                    RCLCPP_INFO(this->get_logger(), "Done ROTATING, now IDLE");
+                    RCLCPP_INFO(this->get_logger(), "Done ROTATING, now IDLE. Pose from server: %d", is_pose_from_server);
 
                     // pub action server result
                     if (is_pose_from_server){
