@@ -132,6 +132,7 @@ void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request
     visited_poses_.clear();
     tsp_result_.clear();
     failed_ids_.clear();
+    pause_inspection();
 }
 
 
@@ -197,7 +198,7 @@ void InspectionPlannerNode::pub_next_nav_goal(){
             std::bind(&InspectionPlannerNode::nav_feedback_callback, this, std::placeholders::_1, std::placeholders::_2);
             send_goal_options.result_callback =
             std::bind(&InspectionPlannerNode::nav_result_callback, this, std::placeholders::_1);
-        nav_action_client_->async_send_goal(goal);
+        nav_action_client_->async_send_goal(goal, send_goal_options);
     }
 }
 
