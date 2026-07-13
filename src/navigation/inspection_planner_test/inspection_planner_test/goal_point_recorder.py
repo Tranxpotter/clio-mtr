@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-goal_point_recorder – Record goal points from /goal_point and save to YAML.
+goal_point_recorder - Record goal points from /goal_point and save to YAML.
 
 Subscribes to /goal_point (geometry_msgs/PointStamped), assigns each a
 sequential inspection waypoint ID, and writes all collected points to a
 YAML file when the user presses Ctrl+C (SIGINT).
 
 Usage:
-    ros2 run inspection_planner goal_point_recorder --output-file ~/inspection_points.yaml
+    ros2 run inspection_planner_test goal_point_recorder --output-file ~/inspection_points.yaml
 
 Output YAML format:
     waypoints:

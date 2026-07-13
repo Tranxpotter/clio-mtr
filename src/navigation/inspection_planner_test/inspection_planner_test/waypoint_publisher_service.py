@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-waypoint_publisher_service – Publish inspection waypoints from a YAML file via service.
+waypoint_publisher_service - Publish inspection waypoints from a YAML file via service.
 
 Provides a service that accepts a YAML file path, reads the recorded waypoints,
 converts them to inspection_planner_interfaces/Waypoints messages, and publishes
 them to /inspection_waypoints for FAR Planner TSP distance calculations.
 
 Usage:
-    ros2 run inspection_planner waypoint_publisher_service
+    ros2 run inspection_planner_test waypoint_publisher_service
 
 Call the service:
     ros2 service call /publish_waypoints_from_yaml inspection_planner_interfaces/srv/PublishWaypointsFromYaml "{yaml_file_path: '/path/to/file.yaml'}"

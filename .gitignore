@@ -13,3 +13,4 @@ rosbags
 .devcontainer/devcontainer-lock.json
 *.vgh
 *.pcd
+*.db

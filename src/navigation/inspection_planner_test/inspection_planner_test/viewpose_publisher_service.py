@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-viewpose_publisher_service – Publish inspection view poses from a YAML file via service.
+viewpose_publisher_service - Publish inspection view poses from a YAML file via service.
 
 Provides a service that accepts a YAML file path, reads the recorded view poses,
 converts them to inspection_planner_interfaces/ViewPoses messages, and publishes
 them to /inspection_poses for visualization and planning.
 
 Usage:
-    ros2 run inspection_planner viewpose_publisher_service
+    ros2 run inspection_planner_test viewpose_publisher_service
 
 Call the service:
     ros2 service call /publish_viewposes_from_yaml inspection_planner_interfaces/srv/PublishWaypointsFromYaml "{yaml_file_path: '/path/to/file.yaml'}"

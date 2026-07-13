@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-goal_pose_recorder – Record goal poses from /goal_pose and save to YAML.
+goal_pose_recorder - Record goal poses from /goal_pose and save to YAML.
 
 Subscribes to /goal_pose (geometry_msgs/PoseStamped), assigns each a
 sequential inspection waypoint ID, and writes all collected poses to a
 YAML file when the user presses Ctrl+C (SIGINT).
 
 Usage:
-    ros2 run inspection_planner goal_pose_recorder --output-file ~/inspection_poses.yaml
+    ros2 run inspection_planner_test goal_pose_recorder --output-file ~/inspection_poses.yaml
 
 Output YAML format:
     waypoints:
