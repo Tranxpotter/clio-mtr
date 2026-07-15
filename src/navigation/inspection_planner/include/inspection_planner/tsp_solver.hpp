@@ -38,6 +38,13 @@ private:
     std::map<std::pair<uint32_t, uint32_t>, double>& dist_map,
     std::vector<uint32_t>& unreachable_pairs);
 
+  /// Find waypoints reachable from the robot (start_id) using distance matrix entries.
+  /// Returns the subset of waypoint_ids that have a distance entry from start_id.
+  std::vector<uint32_t> find_connected_component(
+    uint32_t start_id,
+    const std::vector<uint32_t>& waypoint_ids,
+    const std::vector<inspection_planner_interfaces::msg::TspDistanceEntry>& entries) const;
+
   // ------------------------------------------------------------------ //
   //  Solver algorithms
   // ------------------------------------------------------------------ //

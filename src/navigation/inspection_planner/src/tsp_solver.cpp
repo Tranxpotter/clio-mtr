@@ -89,36 +89,108 @@ void TspSolverNode::on_service_called(
     return;
   }
 
-  // ---- Normalize the distance matrix ----
+  // ---- Filter unreachable waypoints using connected component ----
+  std::vector<uint32_t> reachable_waypoints = find_connected_component(start_id_, waypoint_ids, entries);
+  std::vector<uint32_t> filtered_ids;
+  if (reachable_waypoints.size() < waypoint_ids.size()) {
+    std::unordered_set<uint32_t> reachable_set(reachable_waypoints.begin(), reachable_waypoints.end());
+    for (uint32_t id : waypoint_ids) {
+      if (!reachable_set.count(id)) {
+        filtered_ids.push_back(id);
+      }
+    }
+    RCLCPP_WARN(this->get_logger(),
+      "TSP: %lu of %lu waypoints reachable from robot (start_id=%u), filtering %lu unreachable",
+      reachable_waypoints.size(), waypoint_ids.size(), start_id_, filtered_ids.size());
+  }
+
+  // ---- Normalize the distance matrix on the reachable subset ----
   std::map<std::pair<uint32_t, uint32_t>, double> dist_map;
   std::vector<uint32_t> unreachable_pairs;
-  if (!normalize_matrix(waypoint_ids, entries, dist_map, unreachable_pairs)) {
-    RCLCPP_ERROR(this->get_logger(),
-      "TSP: matrix normalization failed — %lu unreachable pairs. Cannot solve.",
+  std::vector<uint32_t> working_waypoints = reachable_waypoints;
+
+  if (!normalize_matrix(working_waypoints, entries, dist_map, unreachable_pairs)) {
+    // Edge case: subgraph not fully connected — iteratively remove most-disconnected waypoint
+    RCLCPP_WARN(this->get_logger(),
+      "TSP: reachable subgraph has %lu unreachable pairs, attempting iterative repair.",
       unreachable_pairs.size());
+    for (int iteration = 0; iteration < (int) working_waypoints.size(); ++iteration) {
+      // Count how many missing pairs each waypoint participates in
+      std::map<uint32_t, int> miss_count;
+      for (uint32_t id : unreachable_pairs) {
+        miss_count[id]++;
+      }
+      // Remove the waypoint with the most missing entries
+      uint32_t worst = 0;
+      int worst_count = 0;
+      for (auto const& [id, count] : miss_count) {
+        if (count > worst_count) {
+          worst_count = count;
+          worst = id;
+        }
+      }
+      auto it = std::find(working_waypoints.begin(), working_waypoints.end(), worst);
+      if (it != working_waypoints.end()) {
+        working_waypoints.erase(it);
+        filtered_ids.push_back(worst);
+      }
+      if (working_waypoints.size() < 2) break;
+      if (normalize_matrix(working_waypoints, entries, dist_map, unreachable_pairs)) {
+        RCLCPP_INFO(this->get_logger(), "TSP: iterative repair succeeded after removing %lu waypoints.", filtered_ids.size() - (reachable_waypoints.size() < waypoint_ids.size() ? (waypoint_ids.size() - reachable_waypoints.size()) : 0));
+        break;
+      }
+    }
+    if (!unreachable_pairs.empty() && working_waypoints.size() >= 2) {
+      RCLCPP_ERROR(this->get_logger(), "TSP: matrix normalization still failed after repair. Cannot solve.");
+      return;
+    }
+  }
+
+  // ---- Handle trivial cases after filtering ----
+  if (working_waypoints.empty()) {
+    RCLCPP_WARN(this->get_logger(), "TSP: no reachable waypoints after filtering.");
+    response->success = false;
+    response->message = "No reachable waypoints from robot position.";
+    return;
+  }
+
+  if (working_waypoints.size() == 1) {
+    RCLCPP_INFO(this->get_logger(), "TSP: single reachable waypoint (%u), returning as-is.", working_waypoints[0]);
+    response->ordered_waypoint_ids.push_back(working_waypoints[0]);
+    response->success = true;
+    if (!filtered_ids.empty()) {
+      response->message = "Filtered " + std::to_string(filtered_ids.size()) + " unreachable waypoints.";
+    }
     return;
   }
 
   // ---- Solve TSP based on selected algorithm ----
   std::vector<uint32_t> order;
   if (solver_algorithm_ == "brute_force") {
-    order = solve_brute_force(waypoint_ids, dist_map);
+    order = solve_brute_force(working_waypoints, dist_map);
   } else if (solver_algorithm_ == "random_nearest") {
-    order = solve_random_nearest(waypoint_ids, dist_map);
+    order = solve_random_nearest(working_waypoints, dist_map);
   } else {
     // Default to nearest_neighbor (also used as fallback)
-    order = solve_nearest_neighbor(waypoint_ids, dist_map);
+    order = solve_nearest_neighbor(working_waypoints, dist_map);
   }
 
   // ---- Publish the result ----
-  // Build a lookup from the original entries to find waypoint positions
-  // (the TspDistanceMatrix doesn't carry positions, so we only output IDs)
   response->ordered_waypoint_ids.reserve(order.size());
 
   for (const auto& id : order) {
     response->ordered_waypoint_ids.push_back(id);
   }
   response->success = true;
+
+  if (!filtered_ids.empty()) {
+    std::string ids_str;
+    for (size_t i = 0; i < filtered_ids.size(); ++i) {
+      if (i > 0) ids_str += ", ";
+      ids_str += std::to_string(filtered_ids[i]);
+    }
+    response->message = "Filtered " + std::to_string(filtered_ids.size()) + " unreachable waypoints: [" + ids_str + "]";
+  }
 
   // Log the full path including robot start
   std::string order_str = "TSP path: robot(" + std::to_string(start_id_) + ") -> ";
@@ -136,6 +208,31 @@ void TspSolverNode::on_service_called(
     response->ordered_waypoint_ids.size());
 }
 
+std::vector<uint32_t> TspSolverNode::find_connected_component(
+  uint32_t start_id,
+  const std::vector<uint32_t>& waypoint_ids,
+  const std::vector<inspection_planner_interfaces::msg::TspDistanceEntry>& entries) const
+{
+  // Scan entries for all entries where source_id == start_id
+  // The corresponding target_ids are the waypoints reachable from the robot
+  std::unordered_set<uint32_t> reachable_targets;
+  for (const auto& e : entries) {
+    if (e.source_id == start_id) {
+      reachable_targets.insert(e.target_id);
+    }
+  }
+
+  // Filter waypoint_ids to only those in the reachable set
+  std::vector<uint32_t> result;
+  result.reserve(waypoint_ids.size());
+  for (uint32_t id : waypoint_ids) {
+    if (reachable_targets.count(id)) {
+      result.push_back(id);
+    }
+  }
+
+  return result;
+}
 
 bool TspSolverNode::normalize_matrix(
   const std::vector<uint32_t>& waypoint_ids,
