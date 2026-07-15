@@ -97,6 +97,24 @@ def generate_launch_description():
         name="inspection_planner"
     )
 
+    inspection_poses_loader = Node(
+        package="inspection_planner_test", 
+        executable="inspection_poses_loader", 
+        name="inspection_poses_loader"
+    )
+
+    # Metacam and robot static tf
+    robot_to_metacam_tf = Node(
+        package="tf2_ros", 
+        executable="static_transform_publisher", 
+        name="robot_to_metacam", 
+        arguments=[
+            '0.03', '0', '0.18',     # x and z axis diff
+            '0.111701', '0.349066', '0',   # 20 degrees pitch  6.4 degrees yaw for forcefully matching waypoints
+            'map', 'metacam'
+        ]
+    )
+
 
 
     return LaunchDescription([
@@ -110,7 +128,9 @@ def generate_launch_description():
     declare_plot, 
     
     nav, 
-    waypoint_publisher, 
+    # waypoint_publisher, 
     tsp_solver, 
-    inspection_planner
+    inspection_planner, 
+    inspection_poses_loader, 
+    robot_to_metacam_tf
     ])

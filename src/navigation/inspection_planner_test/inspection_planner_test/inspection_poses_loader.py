@@ -20,6 +20,9 @@ from inspection_planner_interfaces.msg import ViewPoses, ViewPose
 from inspection_planner_interfaces.srv import LoadInspectionPoses
 from geometry_msgs.msg import Pose, Point, Quaternion
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
+import tf2_ros
+import rclpy.time
+import tf2_geometry_msgs
 
 import sqlite3
 
@@ -33,17 +36,28 @@ class InspectionPosesLoader(Node):
     def __init__(self):
         super().__init__('inspection_poses_loader')
 
+        self.declare_parameter("target_frame", "map")       # Optional frame transformation
+        self.declare_parameter("source_frame", "metacam")
         
+        self.target_frame = self.get_parameter("target_frame").value
+        self.source_frame = self.get_parameter("source_frame").value
+
+        self.tf_buffer = None
+        self.tf_listener = None
+        if self.target_frame != self.source_frame:
+            self.tf_buffer = tf2_ros.Buffer()
+            self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
 
         self.publisher = self.create_publisher(ViewPoses, '/inspection_poses', 5)
 
         self.srv = self.create_service(
             LoadInspectionPoses,
-            '/publish_viewposes_from_yaml',
+            '/load_inspection_poses',
             self._handle_publish_request
         )
         self.get_logger().info(
-            'Service /publish_viewposes_from_yaml is ready.'
+            'Service /load_inspection_poses is ready.'
         )
 
     def _handle_publish_request(
@@ -112,7 +126,7 @@ class InspectionPosesLoader(Node):
             pos_data = entry.get('position', {})
             ori_data = entry.get('orientation', {})
 
-            vp.pose = Pose(
+            pose = Pose(
                 position=Point(
                     x=float(pos_data.get('x', 0.0)),
                     y=float(pos_data.get('y', 0.0)),
@@ -125,6 +139,12 @@ class InspectionPosesLoader(Node):
                     w=float(ori_data.get('w', 1.0)),
                 ),
             )
+
+            # Do pose transform
+            pose = self.transform_pose(pose)
+            vp.pose = pose
+
+
             msg.poses.append(vp)
 
         self.publisher.publish(msg)
@@ -136,6 +156,22 @@ class InspectionPosesLoader(Node):
         response.message = f'Successfully published {len(msg.poses)} view poses.'
         response.waypoints_published = len(msg.poses)
         return response
+    
+    def transform_pose(self, pose:Pose) -> Pose:
+        if self.source_frame == self.target_frame:
+            return pose
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                self.target_frame, self.source_frame, rclpy.time.Time()
+            )
+
+            transformed_pose = tf2_geometry_msgs.do_transform_pose(pose, transform)
+            return transformed_pose
+        except Exception as e:
+            self.get_logger().warn(f"Cannot transform pose from {self.source_frame} to {self.target_frame}.")
+            return pose
+
+
 
 
 def main(args=None):
