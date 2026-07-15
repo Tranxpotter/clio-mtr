@@ -30,12 +30,12 @@ InspectionPlannerNode::InspectionPlannerNode()
 
     // Other parameters
     auto pose_merge_distance_tolerance_desc = rcl_interfaces::msg::ParameterDescriptor();
-    pose_merge_distance_tolerance_desc.description = "Poses within tolerance will be considered as the same. Both dist and angular tolerance must be passed.";
+    pose_merge_distance_tolerance_desc.description = "Distance tolerance in meters. Poses within tolerance will be considered as the same. Both dist and angular tolerance must be passed.";
     this->declare_parameter<double>("pose_merge_distance_tolerance", 0.1, pose_merge_distance_tolerance_desc);
 
     auto pose_merge_angular_tolerance_desc = rcl_interfaces::msg::ParameterDescriptor();
-    pose_merge_angular_tolerance_desc.description = "Poses within tolerance will be considered as the same. Both dist and angular tolerance must be passed.";
-    this->declare_parameter<double>("pose_merge_angular_tolerance", 0.1, pose_merge_angular_tolerance_desc);
+    pose_merge_angular_tolerance_desc.description = "Angular tolerance in radians. Poses within tolerance will be considered as the same. Both dist and angular tolerance must be passed.";
+    this->declare_parameter<double>("pose_merge_angular_tolerance", 0.349066, pose_merge_angular_tolerance_desc);
 
     // Get parameters
     inspection_poses_sub_topic_ = this->get_parameter("inspection_poses_topic").as_string();
@@ -88,6 +88,8 @@ void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr
     std::unordered_map<uint32_t, geometry_msgs::msg::Pose> new_pose_map;
     build_poses_map(msg, new_pose_map);
 
+    merge_similar_poses(new_pose_map);
+
     filter_repeated_poses(new_pose_map, unvisited_poses_);
     filter_repeated_poses(new_pose_map, visited_poses_);
     RCLCPP_INFO(this->get_logger(), "Filtered received poses. Number of poses remaining: %ld", new_pose_map.size());
@@ -115,10 +117,13 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
     auto response = future.get();
     if (response->success){
         this->tsp_result_ = response->ordered_waypoint_ids;
-        RCLCPP_DEBUG(this->get_logger(), "TSP solved. Ordered waypoints: %zu", this->tsp_result_.size());
+        RCLCPP_INFO(this->get_logger(), "TSP solved. Ordered waypoints: %zu", this->tsp_result_.size());
+        if (!response->message.empty()) {
+            RCLCPP_INFO(this->get_logger(), "TSP solver message: %s", response->message.c_str());
+        }
     } else {
         RCLCPP_ERROR(this->get_logger(), "TSP solver failed: %s", response->message.c_str());
-        this->tsp_result_.clear(); // TODO Should I not clear it here? Or just clear it lol idk
+        this->tsp_result_.clear();
     }
     curr_nav_tsp_index_ = 0;
     start_inspection();
@@ -250,6 +255,86 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
 }
 
 
+// My version, idk if the code is actually valid
+// void InspectionPlannerNode::merge_similar_poses(std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& new_poses){
+//     for (auto it = new_poses.begin(); it != new_poses.end();){
+//         auto pose = it->second;
+//         for (auto it2 = it; it2 != new_poses.end();){
+//             auto pose2 = it2->second;
+//             if (is_same_pose(pose, pose2)){
+//                 it2 = new_poses.erase(it2);
+//             }
+//         }
+//     }
+// }
+
+
+
+void InspectionPlannerNode::merge_similar_poses(std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& new_poses){
+    for (auto it = new_poses.begin(); it != new_poses.end(); ++it){
+        uint32_t keeper_id = it->first;
+        geometry_msgs::msg::Pose& keeper_pose = it->second;
+
+        // Collect all iterators to similar poses (including self)
+        std::vector<std::pair<uint32_t, geometry_msgs::msg::Pose>> similar;
+        similar.reserve(new_poses.size());
+        for (auto it2 = new_poses.begin(); it2 != new_poses.end(); ++it2){
+            if (is_same_pose(keeper_pose, it2->second)){
+                similar.push_back({it2->first, it2->second});
+            }
+        }
+
+        if (similar.size() < 2) continue;
+
+        // Average position
+        double avg_x = 0, avg_y = 0, avg_z = 0;
+        for (auto& [id, p] : similar){
+            avg_x += p.position.x;
+            avg_y += p.position.y;
+            avg_z += p.position.z;
+        }
+        avg_x /= similar.size();
+        avg_y /= similar.size();
+        avg_z /= similar.size();
+
+        // Average orientation using quaternion mean
+        double avg_qx = 0, avg_qy = 0, avg_qz = 0, avg_qw = 0;
+        for (auto& [id, p] : similar){
+            // Ensure quaternions point in the same hemisphere
+            double sign = (similar[0].second.orientation.w >= 0) ? 1.0 : -1.0;
+            avg_qx += sign * p.orientation.x;
+            avg_qy += sign * p.orientation.y;
+            avg_qz += sign * p.orientation.z;
+            avg_qw += sign * p.orientation.w;
+        }
+        avg_qx /= similar.size();
+        avg_qy /= similar.size();
+        avg_qz /= similar.size();
+        avg_qw /= similar.size();
+
+        // Normalize
+        double norm = std::sqrt(avg_qx*avg_qx + avg_qy*avg_qy + avg_qz*avg_qz + avg_qw*avg_qw);
+        if (norm > 1e-6){
+            avg_qx /= norm; avg_qy /= norm; avg_qz /= norm; avg_qw /= norm;
+        }
+
+        // Update keeper with averaged pose
+        keeper_pose.position.x = avg_x;
+        keeper_pose.position.y = avg_y;
+        keeper_pose.position.z = avg_z;
+        keeper_pose.orientation.x = avg_qx;
+        keeper_pose.orientation.y = avg_qy;
+        keeper_pose.orientation.z = avg_qz;
+        keeper_pose.orientation.w = avg_qw;
+
+        // Erase all similar poses except the keeper
+        for (auto& [id, p] : similar){
+            if (id != keeper_id){
+                new_poses.erase(id);
+            }
+        }
+    }
+}
 
 
 

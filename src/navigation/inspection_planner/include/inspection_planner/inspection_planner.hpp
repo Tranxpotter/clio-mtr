@@ -118,6 +118,13 @@ class InspectionPlannerNode : public rclcpp::Node
 
 
         /* Helper funcs */
+        
+        /**
+         * @brief Merge inspection poses that are similar to each other
+         * 
+         * @param new_poses [in/out] incoming poses
+         */
+        void merge_similar_poses(std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& new_poses);
 
         /**
          * @brief filter out new poses that already appeared in prev poses based on ID and pose
