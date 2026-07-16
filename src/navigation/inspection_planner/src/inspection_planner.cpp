@@ -26,6 +26,10 @@ InspectionPlannerNode::InspectionPlannerNode()
     tsp_distance_matrix_sub_topic_desc.description = "Distance Matrix subcription topic name";
     this->declare_parameter<std::string>("tsp_distance_matrix_topic", "/tsp_distance_matrix", tsp_distance_matrix_sub_topic_desc);
 
+    auto planner_status_sub_topic_desc = rcl_interfaces::msg::ParameterDescriptor();
+    planner_status_sub_topic_desc.description = "FAR Planner planning status subscription topic";
+    this->declare_parameter<std::string>("planner_status_topic", "/far_planning_status", planner_status_sub_topic_desc);
+
     
 
     // Other parameters
@@ -43,6 +47,7 @@ InspectionPlannerNode::InspectionPlannerNode()
     tsp_solver_srv_ = this->get_parameter("tsp_solver").as_string();
     tsp_waypoints_pub_topic_ = this->get_parameter("tsp_waypoints_topic").as_string();
     tsp_distance_matrix_sub_topic_ = this->get_parameter("tsp_distance_matrix_topic").as_string();
+    planner_status_sub_topic_ = this->get_parameter("planner_status_topic").as_string();
 
     pose_merge_distance_tolerance_ = this->get_parameter("pose_merge_distance_tolerance").as_double();
     pose_merge_angular_tolerance_ = this->get_parameter("pose_merge_angular_tolerance").as_double();
@@ -70,6 +75,12 @@ InspectionPlannerNode::InspectionPlannerNode()
         tsp_distance_matrix_sub_topic_, 
         1, 
         std::bind(&InspectionPlannerNode::distance_matrix_callback, this, std::placeholders::_1)
+    );
+
+    planner_status_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+        planner_status_sub_topic_, 
+        5, 
+        std::bind(&InspectionPlannerNode::planner_status_callback, this, std::placeholders::_1)
     );
 
 
@@ -130,6 +141,19 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
 }
 
 
+void InspectionPlannerNode::planner_status_callback(const std_msgs::msg::Bool::SharedPtr msg){
+    planner_found_path_ = msg->data;
+    RCLCPP_INFO(this->get_logger(), "Planner status: %d", planner_found_path_);
+    if (msg->data) return;
+
+    Waypoints waypoints_msg;
+    build_waypoints_msg(unvisited_poses_, waypoints_msg);
+    tsp_waypoints_pub_->publish(waypoints_msg);
+    waiting_new_tsp_result_ = true;
+}
+
+
+
 void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request::SharedPtr request, std_srvs::srv::Trigger::Response::SharedPtr response){
     (void) request;
     (void) response;
@@ -147,19 +171,27 @@ void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request
 
 void InspectionPlannerNode::start_inspection(){
     inspection_active = true;
+    RCLCPP_INFO(this->get_logger(), "Starting inspection...");
     pub_next_nav_goal();
 }
 
 
 void InspectionPlannerNode::pause_inspection(){
     inspection_active = false;
-    if (nav_goal_handle_ && nav_goal_handle_->get_status() == rclcpp_action::GoalStatus::STATUS_EXECUTING) {
-        nav_action_client_->async_cancel_goal(nav_goal_handle_);
-    }
+    if (nav_goal_handle_){
+        auto status = nav_goal_handle_->get_status();
+        if (status == rclcpp_action::GoalStatus::STATUS_ACCEPTED || 
+            nav_goal_handle_->get_status() == rclcpp_action::GoalStatus::STATUS_EXECUTING)
+        {
+            RCLCPP_INFO(this->get_logger(), "Cancelling navigation goal pose...");
+            nav_action_client_->async_cancel_goal(nav_goal_handle_);
+        }
+        nav_goal_handle_ = nullptr;
+    }   
 }
 
 
-void InspectionPlannerNode::pub_next_nav_goal(){
+bool InspectionPlannerNode::pub_next_nav_goal(){
     int next_pose_id = -1;
     // Search for valid nav goal pose id
     while (true){
@@ -167,6 +199,7 @@ void InspectionPlannerNode::pub_next_nav_goal(){
             // No more tsp results
             if (unvisited_poses_.size() == 0){
                 RCLCPP_INFO(this->get_logger(), "All Inspection Waypoints Visited.");
+                return true; // FIXME: Review this return
             } else {
                 RCLCPP_INFO(this->get_logger(), "No TSP result, fall back to direct waypoint navigation.");
                 next_pose_id = unvisited_poses_.begin()->first;
@@ -183,32 +216,42 @@ void InspectionPlannerNode::pub_next_nav_goal(){
         RCLCPP_ERROR(this->get_logger(), "Cannot find node in unvisited poses with ID: %d, skipping TSP result", next_tsp_id);
     }
 
+    if (next_pose_id == -1) return false;
 
-    if (next_pose_id != -1){
-        curr_nav_goal_ = next_pose_id;
-        auto goal_pose = unvisited_poses_.at(curr_nav_goal_);
-        inspection_planner_interfaces::action::NavToPose::Goal goal;
-        goal.pose.pose = goal_pose;
-
-        RCLCPP_INFO(this->get_logger(), "Navigating to goal pose with ID: %d", curr_nav_goal_);
-
-        // TODO Custom header settings, ViewPoseStamped...
-        goal.pose.header.stamp = this->get_clock()->now();
-        goal.pose.header.frame_id = "map";
-
-        auto send_goal_options = rclcpp_action::Client<NavToPose>::SendGoalOptions();
-            send_goal_options.goal_response_callback =
-            std::bind(&InspectionPlannerNode::nav_goal_response_callback, this, std::placeholders::_1);
-            send_goal_options.feedback_callback =
-            std::bind(&InspectionPlannerNode::nav_feedback_callback, this, std::placeholders::_1, std::placeholders::_2);
-            send_goal_options.result_callback =
-            std::bind(&InspectionPlannerNode::nav_result_callback, this, std::placeholders::_1);
-        nav_action_client_->async_send_goal(goal, send_goal_options);
+    if (!nav_action_client_->action_server_is_ready()) {
+        RCLCPP_ERROR(this->get_logger(), "Navigation action server is not available!");
+        return false; 
     }
+    curr_nav_goal_ = next_pose_id;
+    auto goal_pose = unvisited_poses_.at(curr_nav_goal_);
+    inspection_planner_interfaces::action::NavToPose::Goal goal;
+    goal.pose.pose = goal_pose;
+
+    RCLCPP_INFO(this->get_logger(), "Navigating to goal pose with ID: %d", curr_nav_goal_);
+
+    // TODO Custom header settings, ViewPoseStamped...
+    goal.pose.header.stamp = this->get_clock()->now();
+    goal.pose.header.frame_id = "map";
+
+    auto send_goal_options = rclcpp_action::Client<NavToPose>::SendGoalOptions();
+        send_goal_options.goal_response_callback =
+        std::bind(&InspectionPlannerNode::nav_goal_response_callback, this, std::placeholders::_1);
+        send_goal_options.feedback_callback =
+        std::bind(&InspectionPlannerNode::nav_feedback_callback, this, std::placeholders::_1, std::placeholders::_2);
+        send_goal_options.result_callback =
+        std::bind(&InspectionPlannerNode::nav_result_callback, this, std::placeholders::_1, next_pose_id);
+    nav_action_client_->async_send_goal(goal, send_goal_options);
+
+    return true;
 }
 
 
 void InspectionPlannerNode::nav_goal_response_callback(const NavGoalHandle::SharedPtr& goal_handle){
+    if (!goal_handle) {
+        RCLCPP_ERROR(this->get_logger(), "Goal was rejected by the action server!");
+        if (inspection_active) pub_next_nav_goal();
+        return;
+    }
     nav_goal_handle_ = goal_handle;
 }
 
@@ -221,33 +264,36 @@ void InspectionPlannerNode::nav_feedback_callback(
     RCLCPP_DEBUG(this->get_logger(), "Received feedback from navigator, code: %d", feedback->state);
 }
 
-void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResult& result){
-    if (!inspection_active) return;
-    auto node = unvisited_poses_.extract(curr_nav_goal_);
+void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResult& result, int goal_id){
+    if (!inspection_active || !nav_goal_handle_) return;
+    auto node = unvisited_poses_.extract(goal_id);
+
+    nav_goal_handle_ = nullptr;
+
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED){
         if (!node){
-            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", curr_nav_goal_);
+            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
         } else {
             visited_poses_.insert(std::move(node));
-            RCLCPP_INFO(this->get_logger(), "Completed navigation to inspection pose. ID: %d", curr_nav_goal_);
+            RCLCPP_INFO(this->get_logger(), "Completed navigation to inspection pose. ID: %d", goal_id);
         }
     }
     else if (result.code == rclcpp_action::ResultCode::ABORTED){
-        RCLCPP_ERROR(this->get_logger(), "Goal was aborted! ID: %d", curr_nav_goal_);
+        RCLCPP_ERROR(this->get_logger(), "Goal was aborted! ID: %d", goal_id);
         if (!node){
-            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", curr_nav_goal_);
+            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
         }
     }
     else if (result.code == rclcpp_action::ResultCode::CANCELED){
-        RCLCPP_INFO(this->get_logger(), "Goal was canceled! ID: %d", curr_nav_goal_);
+        RCLCPP_INFO(this->get_logger(), "Goal was canceled! ID: %d", goal_id);
         if (!node){
-            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", curr_nav_goal_);
+            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
         }
     }
     else{
-        RCLCPP_ERROR(this->get_logger(), "Unknown result code. ID: %d", curr_nav_goal_);
+        RCLCPP_ERROR(this->get_logger(), "Unknown result code. ID: %d", goal_id);
         if (!node){
-            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", curr_nav_goal_);
+            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
         }
     }
 
@@ -431,7 +477,8 @@ bool InspectionPlannerNode::is_same_pose(const geometry_msgs::msg::Pose& pose1, 
         double yaw2 = std::atan2(2.0 * (w2 * z2 + x2 * y2), 1.0 - 2.0 * (y2 * y2 + z2 * z2));
         if (normalize_angle_diff(yaw1 - yaw2) > pose_merge_angular_tolerance_) return false;
     }
-
+    
+    // No need check pitch or roll since robot can't actually control these
     // // Check pitch
     // {
     //     double x1 = pose1.orientation.x, y1 = pose1.orientation.y,

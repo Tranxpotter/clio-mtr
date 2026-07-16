@@ -168,9 +168,10 @@ class GoalRotatorNode : public rclcpp::Node
 
         // States
         const int IDLE = 0, NAVIGATING = 1, ROTATING = 2;
-        int state = 0;
+        std::atomic<int> state = 0;
         bool is_pose_from_server = false;
-        std::shared_ptr<rclcpp_action::ServerGoalHandle<inspection_planner_interfaces::action::NavToPose>> server_goal_handle;
+        std::shared_ptr<rclcpp_action::ServerGoalHandle<inspection_planner_interfaces::action::NavToPose>> active_goal_handle_{nullptr};
+        std::mutex goal_handle_mutex_;
 
         geometry_msgs::msg::PoseStamped goal_pose_;
         std::shared_ptr<nav_msgs::msg::Odometry> odom_;
@@ -186,17 +187,25 @@ class GoalRotatorNode : public rclcpp::Node
          */
         void get_goal_point_from_pose(const geometry_msgs::msg::PoseStamped &pose, geometry_msgs::msg::PointStamped &point){
             point.header = pose.header;
-            point.point.x = pose.pose.position.x;
-            point.point.y = pose.pose.position.y;
-            point.point.z = pose.pose.position.z;
+            point.point = pose.pose.position;
         }
 
         /**
-         * @brief Goal Pose callback, update state and publish goal point
+         * @brief Goal Pose callback, aborts old goal, update state and publish goal point
          * 
          * @param msg 
          */
         void on_receive_pose_(std::shared_ptr<geometry_msgs::msg::PoseStamped> msg){
+            std::lock_guard<std::mutex> lock(goal_handle_mutex_);
+
+            if (active_goal_handle_ && active_goal_handle_->is_active()) {
+                RCLCPP_WARN(this->get_logger(), "Topic goal received while action server busy. Aborting old goal...");
+                auto result = std::make_shared<inspection_planner_interfaces::action::NavToPose::Result>();
+                result->result = false;
+                active_goal_handle_->abort(result);
+                active_goal_handle_ = nullptr;
+            }
+
             goal_pose_ = *msg;
             is_pose_from_server = false;
             RCLCPP_INFO(this->get_logger(), "Received goal pose from message. Navigating to pose...");
@@ -209,7 +218,7 @@ class GoalRotatorNode : public rclcpp::Node
         }
 
         /**
-         * @brief Action server callback, update state and publish goal point
+         * @brief Action server callback, aborts old goal, update state and publish goal point
          * 
          * @param uuid 
          * @param goal 
@@ -220,6 +229,15 @@ class GoalRotatorNode : public rclcpp::Node
             inspection_planner_interfaces::action::NavToPose::Goal::ConstSharedPtr goal)
         {
             (void)uuid;
+            std::lock_guard<std::mutex> lock(goal_handle_mutex_);
+
+            if (active_goal_handle_ && active_goal_handle_->is_active()){
+                RCLCPP_WARN(this->get_logger(), "New goal received while busy, aborting old goal...");
+                auto result = std::make_shared<inspection_planner_interfaces::action::NavToPose::Result>();
+                result->result = false;
+                active_goal_handle_->abort(result);
+            }
+
             goal_pose_ = goal->pose;
             RCLCPP_INFO(this->get_logger(), "Received goal pose from server. Accepting goal...");
             return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
@@ -235,13 +253,23 @@ class GoalRotatorNode : public rclcpp::Node
             const std::shared_ptr<rclcpp_action::ServerGoalHandle<inspection_planner_interfaces::action::NavToPose>> goal_handle
         )
         {
-            (void)goal_handle;
-            auto goal_point = geometry_msgs::msg::PointStamped();
-            goal_point.header = goal_pose_.header;
-            goal_point.point.x = odom_->pose.pose.position.x;
-            goal_point.point.y = odom_->pose.pose.position.y;
-            goal_point.point.z = odom_->pose.pose.position.z;
-            goal_point_pub_->publish(goal_point);
+            std::lock_guard<std::mutex> lock(goal_handle_mutex_);
+            auto result = std::make_shared<inspection_planner_interfaces::action::NavToPose::Result>();
+            result->result = false;
+
+            if (goal_handle == active_goal_handle_){
+                RCLCPP_INFO(this->get_logger(), "Received cancel request for the active goal, cancelling goal...");
+                auto goal_point = geometry_msgs::msg::PointStamped();
+                goal_point.header = goal_pose_.header;
+                if (odom_){
+                    goal_point.point = odom_->pose.pose.position;
+                }   
+                goal_point_pub_->publish(goal_point);
+                curr_output_vel = geometry_msgs::msg::Twist();
+
+                active_goal_handle_ = nullptr;
+            }
+            goal_handle->canceled(result);
 
             state = IDLE;
             return rclcpp_action::CancelResponse::ACCEPT;
@@ -251,19 +279,22 @@ class GoalRotatorNode : public rclcpp::Node
             const std::shared_ptr<rclcpp_action::ServerGoalHandle<inspection_planner_interfaces::action::NavToPose>> goal_handle
         )
         {
-            is_pose_from_server = true;
             RCLCPP_INFO(this->get_logger(), "Goal accepted, navigating to pose...");
-
-            server_goal_handle = goal_handle;
+            
             auto feedback = std::make_shared<inspection_planner_interfaces::action::NavToPose::Feedback>();
             feedback->state = NAVIGATING;
 
             auto goal_point = geometry_msgs::msg::PointStamped();
-            get_goal_point_from_pose(goal_pose_, goal_point);
-            state = NAVIGATING;
-            goal_point_pub_->publish(goal_point);
+            {
+                std::lock_guard<std::mutex> lock(goal_handle_mutex_);
+                active_goal_handle_ = goal_handle;
+                is_pose_from_server = true;
+                state = NAVIGATING;
+                get_goal_point_from_pose(goal_pose_, goal_point);
+            }
 
-            server_goal_handle->publish_feedback(feedback);
+            goal_point_pub_->publish(goal_point);
+            goal_handle->publish_feedback(feedback);
         }
 
 
@@ -279,24 +310,28 @@ class GoalRotatorNode : public rclcpp::Node
          */
         void on_receive_status(std::shared_ptr<std_msgs::msg::Bool> msg){
             if (!msg->data) return;
+
+            std::lock_guard<std::mutex> lock(goal_handle_mutex_);
             if (state == NAVIGATING){
                 state = ROTATING;
                 RCLCPP_INFO(this->get_logger(), "Done navigation, switching to ROTATING. Pose from server: %d", is_pose_from_server);
                 if (is_pose_from_server){
                     auto feedback = std::make_shared<inspection_planner_interfaces::action::NavToPose::Feedback>();
                     feedback->state = ROTATING;
-                    server_goal_handle->publish_feedback(feedback);
+                    active_goal_handle_->publish_feedback(feedback);
                 }
             }
         }
 
         void on_receive_cmd_vel(std::shared_ptr<geometry_msgs::msg::Twist> msg){
+            std::lock_guard<std::mutex> lock(goal_handle_mutex_);
             if (state != ROTATING){
                 curr_output_vel = *msg;
             }
         }
 
         void on_receive_cmd_vel_stamped(std::shared_ptr<geometry_msgs::msg::TwistStamped> msg){
+            std::lock_guard<std::mutex> lock(goal_handle_mutex_);
             if (state != ROTATING){
                 auto output = msg->twist;
                 curr_output_vel = output;
@@ -310,6 +345,7 @@ class GoalRotatorNode : public rclcpp::Node
             }
 
             odom_ = msg;
+            std::lock_guard<std::mutex> lock(goal_handle_mutex_);
 
             if (state == ROTATING){
                 // Convert goal pose to odom frame
@@ -326,13 +362,16 @@ class GoalRotatorNode : public rclcpp::Node
                     state = IDLE;
                     curr_output_vel = geometry_msgs::msg::Twist();
                     RCLCPP_INFO(this->get_logger(), "Done ROTATING, now IDLE. Pose from server: %d", is_pose_from_server);
-
+                    
                     // pub action server result
-                    if (is_pose_from_server){
-                        auto result = std::make_shared<inspection_planner_interfaces::action::NavToPose::Result>();
-                        result->result = true;
-                        server_goal_handle->succeed(result);
-
+                    if (is_pose_from_server && active_goal_handle_){
+                        if (active_goal_handle_->is_active()){
+                            auto result = std::make_shared<inspection_planner_interfaces::action::NavToPose::Result>();
+                            result->result = true;
+                            active_goal_handle_->succeed(result);
+                        }
+                        
+                        active_goal_handle_ = nullptr;
                         is_pose_from_server = false;
                     }
                     return;
@@ -367,7 +406,12 @@ class GoalRotatorNode : public rclcpp::Node
         }
 
         void timer_callback(){
-            output_pub_->publish(curr_output_vel);
+            geometry_msgs::msg::Twist output_vel;
+            {
+                std::lock_guard<std::mutex> lock(goal_handle_mutex_);
+                output_vel = curr_output_vel;
+            }
+            output_pub_->publish(output_vel);
         }
 
 }; 

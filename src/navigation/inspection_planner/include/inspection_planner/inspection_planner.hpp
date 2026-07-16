@@ -11,6 +11,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <inspection_planner_interfaces/msg/tsp_distance_matrix.hpp>
@@ -40,6 +41,7 @@ class InspectionPlannerNode : public rclcpp::Node
         rclcpp::Client<SolveTsp>::SharedPtr tsp_solver_client_;                         // tsp solver client
         rclcpp::Publisher<Waypoints>::SharedPtr tsp_waypoints_pub_;                     // Publishes inspection waypoints to far planner tsp distance matrix calculator
         rclcpp::Subscription<TspDistanceMatrix>::SharedPtr tsp_distance_matrix_sub_;    // Get tsp distance matrix
+        rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr planner_status_sub_;       // Get FAR Planner planning status
         rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
 
         // TODO: Visualizer topics
@@ -49,6 +51,7 @@ class InspectionPlannerNode : public rclcpp::Node
         std::string tsp_solver_srv_;                // tsp_solver_client_
         std::string tsp_waypoints_pub_topic_;       // tsp_waypoints_pub_
         std::string tsp_distance_matrix_sub_topic_; // tsp_distance_matrix_sub_
+        std::string planner_status_sub_topic_;      // 
 
         // Other params
         double pose_merge_distance_tolerance_;
@@ -79,12 +82,22 @@ class InspectionPlannerNode : public rclcpp::Node
         void tsp_result_callback(rclcpp::Client<SolveTsp>::SharedFuture future_cmd);
 
         /**
+         * @brief If planner status failed immediately do tsp again
+         * 
+         * @param msg 
+         */
+        void planner_status_callback(const std_msgs::msg::Bool::SharedPtr msg);
+
+        /**
          * @brief Reset inspection progress and clear all inspection poses
          * 
          * @param request 
          * @param response 
          */
         void reset_callback(const std_srvs::srv::Trigger::Request::SharedPtr request, std_srvs::srv::Trigger::Response::SharedPtr response);
+
+        
+
 
 
         /* Attributes */
@@ -102,18 +115,25 @@ class InspectionPlannerNode : public rclcpp::Node
         NavGoalHandle::SharedPtr nav_goal_handle_;
         int curr_nav_goal_ = -1;
         bool inspection_active = false;
+        bool planner_found_path_ = true;
 
         void start_inspection();
 
         void pause_inspection();
 
-        void pub_next_nav_goal();
+        /**
+         * @brief 
+         * 
+         * @return true 
+         * @return false 
+         */
+        bool pub_next_nav_goal();
 
         void nav_goal_response_callback(const NavGoalHandle::SharedPtr& goal_handle);
 
         void nav_feedback_callback(const NavGoalHandle::SharedPtr& goal_handle, const std::shared_ptr<const NavToPose::Feedback> feedback);
 
-        void nav_result_callback(const NavGoalHandle::WrappedResult& result);
+        void nav_result_callback(const NavGoalHandle::WrappedResult& result, int goal_id);
 
 
 
