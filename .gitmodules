@@ -16,3 +16,6 @@
 [submodule "pcd-map-preprocessing"]
 	path = pcd-map-preprocessing
 	url = https://github.com/Tranxpotter/pcd-map-preprocessing.git
+[submodule "src/metacam_utils"]
+	path = src/metacam_utils
+	url = https://github.com/Tranxpotter/metacam_utils.git
