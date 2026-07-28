@@ -66,6 +66,8 @@ def generate_launch_description():
         launch_arguments={
             "odom_frame":"robot_init", 
             "robot_frame":"robot_footprint", 
+            "odom_topic":"/robot_odom", 
+            "cloud_topic":"cloud_registered_corrected", 
             "use_sim_time":use_sim_time
         }.items()
     )

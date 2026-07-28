@@ -19,3 +19,7 @@
 [submodule "src/metacam_utils"]
 	path = src/metacam_utils
 	url = https://github.com/Tranxpotter/metacam_utils.git
+[submodule "src/navigation/cmu/tare_planner"]
+	path = src/navigation/cmu/tare_planner
+	url = https://github.com/Tranxpotter/tare_planner.git
+	branch = humble-jazzy

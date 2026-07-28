@@ -32,8 +32,8 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     # Set these values
-    default_map_path = "iw_maps/upper_transformed.pcd"
-    default_graph_path = "iw_graphs/upper2.vgh"
+    default_map_path = "iw_maps/2_processed.pcd"
+    default_graph_path = "iw_graphs/2.vgh"
 
 
 
@@ -255,6 +255,8 @@ def generate_launch_description():
                 launch_arguments={
                     "odom_frame":"robot_init", 
                     "robot_frame":"robot_footprint", 
+                    "odom_topic":"/robot_odom", 
+                    "cloud_topic":"cloud_registered_corrected", 
                     "use_sim_time":use_bag
                 }.items()
             )

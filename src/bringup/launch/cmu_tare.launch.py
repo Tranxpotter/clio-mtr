@@ -151,13 +151,15 @@ def generate_launch_description():
         ]
     )
 
-    # FAR Planner
-    far_group = TimerAction(
-        period=4.0, 
+    # TARE Planner
+    tare_group = TimerAction(
+        period=6.0, 
         actions=[
             IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(os.path.join(
-                    get_package_share_directory('far_planner'), 'launch', 'far_planner.launch')
+                PythonLaunchDescriptionSource(
+                    os.path.join(
+                        get_package_share_directory('tare_planner'), 'explore.launch'
+                    )
                 ), 
                 launch_arguments={
                     "use_sim_time":use_bag
@@ -254,7 +256,7 @@ def generate_launch_description():
     camera_init_static_pub, 
     sensor_frame_corrector_node, 
     cmu_group, 
-    far_group, 
+    tare_group, 
     goal_rotator, 
     velocity_smoother, 
     # control_node, 
