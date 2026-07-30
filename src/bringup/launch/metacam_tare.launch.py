@@ -102,8 +102,8 @@ def generate_launch_description():
                 launch_arguments={
                     "odom_frame":"robot_init", 
                     "robot_frame":"robot_footprint", 
-                    "odom_topic":"/robot_odom", 
-                    "cloud_topic":"cloud_registered_corrected",                     
+                    "odom_topic":"/Odometry", 
+                    "cloud_topic":"cloud_registered",                     
                     "use_sim_time":use_bag
                 }.items()
             )
@@ -197,9 +197,18 @@ def generate_launch_description():
 
     bag_name = datetime.datetime.now().isoformat(timespec="seconds").replace(":", "_")
     rosbag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'record', '-o', [bag_path, bag_name], "/livox/lidar", "/livox/imu", "/initialpose", "/way_point"],
-        output='screen', 
-        condition=IfCondition(record_bag), 
+        cmd=['ros2', 'bag', 'record','-s','mcap', '-o', [bag_path, bag_name], 
+             "/tower/lidar/points", 
+             "/tower/imu/data", 
+             "/tower/mapping/odometry", 
+             "/tower/camera/left/jpeg", 
+             "/tower/camera/left/preview", 
+             "/tower/camera/right/jpeg", 
+             "/tower/camera/right/preview", 
+             "/tower/rtk/nmea",
+             "/tower/rtk/gnss_soln",
+            ],
+        output='screen',  
         name="rosbag_recorder"
     )
 
