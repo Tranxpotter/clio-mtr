@@ -1,19 +1,3 @@
-'''
-Docstring for clio_bringup.launch.navigation.launch.py
-
-Launch arguments: (* important)
-    driver: Whether to launch the Livox ROS Driver 2 (default: True)
-    fastlio: Whether to launch the Fast LIO mapping node (default: True)
-    static_odom: Whether to launch static odom node to link map -> camera_init (default: True)
-    localizer: Whether to launch the localizer node (default: True)
-    remapper: Whether to launch the remapper node (default True)
-    *map_path: Path to the saved map (default: "maps/scans.pcd")
-    *map_2d_path: Path to 2d map yaml (default: "maps/map.yaml")
-    use_sim_time: Use sim time (default: False)
-'''
-
-
-
 import os
 import math
 import launch
@@ -30,64 +14,20 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    this_pkg_name = 'bringup'
-    this_pkg_dir = get_package_share_directory(this_pkg_name)
-    driver_dir = get_package_share_directory("livox_ros_driver2")
-    fastlio_dir = get_package_share_directory("fast_lio")
     velocity_smoother_dir = get_package_share_directory("velocity_smoother")
     goal_rotator_wrapper_dir = get_package_share_directory("goal_rotator_wrapper")
 
     # Declare launch arguments
     declare_use_bag = DeclareLaunchArgument('use_bag', default_value="False")
-    declare_launch_fastlio = DeclareLaunchArgument('fastlio', default_value="True")
     declare_bag = DeclareLaunchArgument('record_bag', default_value="True")
     declare_bag_path = DeclareLaunchArgument('bag_path', default_value="rosbags/")
     declare_plot = DeclareLaunchArgument('plot', default_value="False")
 
     use_bag = LaunchConfiguration('use_bag')
-    launch_fastlio = LaunchConfiguration('fastlio')
     bag_path = LaunchConfiguration('bag_path')
     record_bag = LaunchConfiguration('record_bag')
     plot = LaunchConfiguration('plot')
 
-    # Livox ros driver 2
-    driver = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([
-                driver_dir, 
-                "launch_ROS2", 
-                "msg_MID360_launch.py"
-            ])
-        ), 
-        condition=UnlessCondition(use_bag)
-    )
-
-
-
-
-    fastlio_group = TimerAction(
-        period=2.0, # Delay 2 seconds for driver to start
-        actions=[GroupAction(
-            [
-                # SetRemap("/Odometry", "/fastlio/Odometry"), 
-
-                IncludeLaunchDescription(
-                    PythonLaunchDescriptionSource(
-                        PathJoinSubstitution([
-                            fastlio_dir, 
-                            "launch", 
-                            "mapping.launch.py"
-                        ])
-                    ), 
-                    launch_arguments={
-                        "config_file":"mid360.yaml", 
-                        "use_sim_time":use_bag, 
-                        "rviz":"false"
-                    }.items(), 
-                    condition=IfCondition(launch_fastlio)
-                )
-            ])]
-    )
 
     # Use static transform from map to robot_init instead of localizer
     robot_init_static_pub = Node(
@@ -100,33 +40,52 @@ def generate_launch_description():
         }]
     )
     
+    metacam_bridge = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory("metacam_utils"), 
+            "launch", 
+            "bridge.launch.py"
+        )), 
+        launch_arguments={
+            "use_sim_time":use_bag
+        }.items()
+    )
 
+    cloud_transform_to_map = Node(
+        package="metacam_utils", 
+        executable="pointcloud_process", 
+        name="pc_transform_node", 
+        parameters=[{
+            "input_topic":"/cloud_registered_body", 
+            "output_topic":"/cloud_registered", 
+            "target_frame":"robot_init", 
+            "do_transform":True, 
+            "do_downsample":False, 
+            "verbal":False, 
+            "use_sim_time":use_bag
+        }], 
+    )
 
-    # Static transform from robot_init to camera_init
-    camera_init_static_pub = Node(
+    body_footprint_static_pub = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
-        name="camera_init_static_pub",
-        arguments=["0", "0", "0", "0.0", "0.0", "3.1415927", "robot_init", "camera_init"], # x, y, z, yaw, pitch, roll
+        name="body_footprint_static_pub",
+        arguments=["0", "0", "0", "0.0", "-0.349066", "0.0", "body", "robot_footprint"], # x, y, z, yaw, pitch, roll
         parameters=[{
             "use_sim_time":use_bag
         }]
     )
 
-    
-    sensor_frame_corrector_node = Node(
-        package="localization_utils", 
-        executable="sensor_frame_corrector", 
-        name="sensor_frame_corrector", 
+
+    tf_to_odom = Node(
+        package="metacam_utils", 
+        executable="tf_to_odom", 
+        name="tf_to_odom", 
         parameters=[{
-            "roll":0.0, 
-            "pitch":3.14159265359, 
-            "yaw":3.14159265359, 
-            "point_cloud_input_topic":"/cloud_registered", 
-            "point_cloud_output_topic":"/cloud_registered_corrected", 
-            "odometry_input_topic":"/Odometry", 
-            'odometry_output_topic': '/robot_odom', 
-            'verbose':False, 
+            "parent_frame":"robot_init", 
+            "child_frame":"robot_footprint", 
+            "odom_topic":"/Odometry", 
+            "rate":10.0, 
             "use_sim_time":use_bag
         }]
     )
@@ -247,15 +206,14 @@ def generate_launch_description():
 
     return LaunchDescription([
     declare_use_bag, 
-    declare_launch_fastlio, 
     declare_bag, 
     declare_bag_path, 
     declare_plot, 
-    driver, 
-    fastlio_group, 
     robot_init_static_pub, 
-    camera_init_static_pub, 
-    sensor_frame_corrector_node, 
+    metacam_bridge, 
+    cloud_transform_to_map, 
+    body_footprint_static_pub, 
+    tf_to_odom, 
     cmu_group, 
     tare_group, 
     goal_rotator, 
