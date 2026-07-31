@@ -209,7 +209,8 @@ def generate_launch_description():
              "/tower/rtk/gnss_soln",
             ],
         output='screen',  
-        name="rosbag_recorder"
+        name="rosbag_recorder", 
+        condition=IfCondition(record_bag)
     )
 
 
