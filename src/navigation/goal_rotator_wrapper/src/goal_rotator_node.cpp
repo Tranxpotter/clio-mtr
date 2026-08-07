@@ -341,7 +341,7 @@ class GoalRotatorNode : public rclcpp::Node
 
             odom_ = msg;
             std::lock_guard<std::mutex> lock(goal_handle_mutex_);
-            if (active_goal_handle_->is_canceling()){
+            if (active_goal_handle_ && active_goal_handle_->is_canceling()){
                 auto result = std::make_shared<inspection_planner_interfaces::action::NavToPose::Result>();
                 result->result = false;
                 active_goal_handle_->canceled(result);
