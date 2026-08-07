@@ -254,8 +254,6 @@ class GoalRotatorNode : public rclcpp::Node
         )
         {
             std::lock_guard<std::mutex> lock(goal_handle_mutex_);
-            auto result = std::make_shared<inspection_planner_interfaces::action::NavToPose::Result>();
-            result->result = false;
 
             if (goal_handle == active_goal_handle_){
                 RCLCPP_INFO(this->get_logger(), "Received cancel request for the active goal, cancelling goal...");
@@ -266,12 +264,9 @@ class GoalRotatorNode : public rclcpp::Node
                 }   
                 goal_point_pub_->publish(goal_point);
                 curr_output_vel = geometry_msgs::msg::Twist();
-
-                active_goal_handle_ = nullptr;
             }
-            goal_handle->canceled(result);
+            // goal_handle->canceled(result);
 
-            state = IDLE;
             return rclcpp_action::CancelResponse::ACCEPT;
         }
 
@@ -346,6 +341,13 @@ class GoalRotatorNode : public rclcpp::Node
 
             odom_ = msg;
             std::lock_guard<std::mutex> lock(goal_handle_mutex_);
+            if (active_goal_handle_->is_canceling()){
+                auto result = std::make_shared<inspection_planner_interfaces::action::NavToPose::Result>();
+                result->result = false;
+                active_goal_handle_->canceled(result);
+                state = IDLE;
+                RCLCPP_INFO(this->get_logger(), "Goal canceled successfully.");
+            }
 
             if (state == ROTATING){
                 // Convert goal pose to odom frame
