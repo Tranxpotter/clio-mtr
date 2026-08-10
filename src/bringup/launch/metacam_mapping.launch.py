@@ -90,6 +90,24 @@ def generate_launch_description():
         }]
     )
 
+    # Mapping node
+    ikd_mapping = Node(
+        package='ikd_tree_mapping',
+        executable='ikd_mapping_node',
+        output='screen',
+        parameters=[
+            {'voxel_size': 0.3},
+            {'publish_interval': 1.0},
+            {'process_frequency':10.0},
+            {'sample_step':1}, #defult : disable step downsample
+            {'save_file':'ikd_map.pcd'},
+            {'stability_threshold':30},
+            {'simple_stability_threshold':20},
+            {'max_range':5.0}
+        ], 
+        # prefix=['xterm -e gdb -ex run --args']
+    )
+
     
     # CMU Local Planner
     cmu_group = TimerAction(
@@ -221,6 +239,7 @@ def generate_launch_description():
     cloud_transform_to_map, 
     body_footprint_static_pub, 
     tf_to_odom, 
+    ikd_mapping, 
     cmu_group, 
     far_group, 
     goal_rotator, 

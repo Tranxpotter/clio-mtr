@@ -23,3 +23,6 @@
 	path = src/navigation/cmu/tare_planner
 	url = https://github.com/Tranxpotter/tare_planner.git
 	branch = humble-jazzy
+[submodule "src/ikd_tree_mapping"]
+	path = src/ikd_tree_mapping
+	url = https://github.com/pig23333/ikd_tree_mapping
