@@ -90,6 +90,14 @@ InspectionPlannerNode::InspectionPlannerNode()
         std::bind(&InspectionPlannerNode::reset_callback, this, std::placeholders::_1, std::placeholders::_2)
     );
 
+
+
+    // Debug topics
+    next_goal_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
+        "/inspection_debug/next_goal", 
+        5
+    );
+
 }
 
 
@@ -232,6 +240,8 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
     // TODO Custom header settings, ViewPoseStamped...
     goal.pose.header.stamp = this->get_clock()->now();
     goal.pose.header.frame_id = "map";
+
+    next_goal_pub_->publish(goal.pose);
 
     auto send_goal_options = rclcpp_action::Client<NavToPose>::SendGoalOptions();
         send_goal_options.goal_response_callback =

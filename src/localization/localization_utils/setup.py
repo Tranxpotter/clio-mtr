@@ -30,6 +30,7 @@ setup(
             'tf_height_remover = localization_utils.tf_height_remover:main', 
             'pointcloud_rotator = localization_utils.pointcloud_rotator:main',
             'sensor_frame_corrector = localization_utils.sensor_frame_corrector:main',
+            'nav_accuracy_logger = localization_utils.nav_accuracy_logger:main'
         ],
     },
 )

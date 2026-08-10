@@ -44,6 +44,9 @@ class InspectionPlannerNode : public rclcpp::Node
         rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr planner_status_sub_;       // Get FAR Planner planning status
         rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
 
+        // Debug pubs
+        rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr next_goal_pub_;
+
         // TODO: Visualizer topics
 
         std::string inspection_poses_sub_topic_;    // inspection_poses_sub_
