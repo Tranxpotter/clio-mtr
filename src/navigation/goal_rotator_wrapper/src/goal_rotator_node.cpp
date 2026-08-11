@@ -12,6 +12,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <rcl_interfaces/msg/parameter_descriptor.hpp>
 
 #include "tf2_ros/transform_listener.hpp"
@@ -89,6 +90,11 @@ class GoalRotatorNode : public rclcpp::Node
             output_hz_desc.description = "Output cmd_vel hz";
             this->declare_parameter<double>("output_hz", 50.0, output_hz_desc);
 
+            auto verbose_desc = rcl_interfaces::msg::ParameterDescriptor();
+            verbose_desc.description = "Debug use";
+            this->declare_parameter<bool>("verbose", false, verbose_desc);
+
+
 
             /* Get parameter values */
             this->pose_topic_ = this->get_parameter("pose_topic").as_string();
@@ -105,6 +111,7 @@ class GoalRotatorNode : public rclcpp::Node
             this->odom_topic_ = this->get_parameter("odom_topic").as_string();
             this->output_topic_ = this->get_parameter("output_topic").as_string();
             this->output_hz_ = this->get_parameter("output_hz").as_double();
+            this->verbose_ = this->get_parameter("verbose").as_bool();
 
             /* Create subscribers and publishers */
             pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(pose_topic_, 1, std::bind(&GoalRotatorNode::on_receive_pose_, this, std::placeholders::_1));
@@ -132,6 +139,10 @@ class GoalRotatorNode : public rclcpp::Node
 
             /* Output timer */
             timer_ = this->create_wall_timer(std::chrono::milliseconds(int(1000/output_hz_)), std::bind(&GoalRotatorNode::timer_callback, this));
+
+
+            /* Debug */
+            debug_angle_diff_pub_ = this->create_publisher<std_msgs::msg::Float32>("/rotator/angle_diff", 10);
         }
     
     private:
@@ -150,6 +161,7 @@ class GoalRotatorNode : public rclcpp::Node
         std::string odom_topic_;
         std::string output_topic_;
         double output_hz_;
+        bool verbose_;
 
         // Subscribers and publishers
         std::shared_ptr<rclcpp::Subscription<geometry_msgs::msg::PoseStamped>> pose_sub_;
@@ -160,6 +172,8 @@ class GoalRotatorNode : public rclcpp::Node
         std::shared_ptr<rclcpp::Subscription<geometry_msgs::msg::TwistStamped>> cmd_vel_stamped_sub_;
         std::shared_ptr<rclcpp::Subscription<nav_msgs::msg::Odometry>> odom_sub_;
         std::shared_ptr<rclcpp::Publisher<geometry_msgs::msg::Twist>> output_pub_;
+
+        std::shared_ptr<rclcpp::Publisher<std_msgs::msg::Float32>> debug_angle_diff_pub_;
 
         std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
         std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -360,6 +374,14 @@ class GoalRotatorNode : public rclcpp::Node
 
                 double yaw_diff = target_yaw - robot_yaw;
                 yaw_diff = std::atan2(std::sin(yaw_diff), std::cos(yaw_diff));
+
+                if (verbose_){
+                    RCLCPP_INFO(this->get_logger(), "ROTATING, angle diff: %lf", yaw_diff);
+                }
+                std_msgs::msg::Float32 debug_msg;
+                debug_msg.data = yaw_diff;
+                this->debug_angle_diff_pub_->publish(debug_msg);
+
                 if (abs(yaw_diff) <= (angle_tolerance_ / 180.0 * 3.1415926)){
                     state = IDLE;
                     curr_output_vel = geometry_msgs::msg::Twist();

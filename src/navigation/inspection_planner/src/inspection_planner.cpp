@@ -207,6 +207,8 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
             // No more tsp results
             if (unvisited_poses_.size() == 0){
                 RCLCPP_INFO(this->get_logger(), "All Inspection Waypoints Visited.");
+                geometry_msgs::msg::PoseStamped placeholder;
+                next_goal_pub_->publish(placeholder);
                 return true; // FIXME: Review this return
             } else {
                 RCLCPP_INFO(this->get_logger(), "No TSP result, fall back to direct waypoint navigation.");
