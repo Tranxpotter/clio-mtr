@@ -421,7 +421,7 @@ class GoalRotatorNode : public rclcpp::Node
             auto pose_frame = pose.header.frame_id;
             if (pose_frame == odom_frame || odom_frame == "") return;
             try{
-                auto transform = tf_buffer_->lookupTransform(pose_frame, odom_frame, tf2::TimePointZero);
+                auto transform = tf_buffer_->lookupTransform(odom_frame, pose_frame, tf2::TimePointZero);
                 tf2::doTransform<geometry_msgs::msg::PoseStamped>(pose, transformed_pose, transform);
             } catch (const tf2::TransformException & ex) {
                 RCLCPP_ERROR(this->get_logger(), "Failed to transform goal pose from %s to %s: %s", pose_frame.c_str(), odom_frame.c_str(), ex.what());
