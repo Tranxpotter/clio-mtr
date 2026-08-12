@@ -78,6 +78,14 @@ class GoalRotatorNode : public rclcpp::Node
             kp_desc.description = "P-Controller multiplier";
             this->declare_parameter<double>("kp", 1.5, kp_desc);
 
+            auto target_distance_threshold_desc = rcl_interfaces::msg::ParameterDescriptor();
+            target_distance_threshold_desc.description = "Maximum distance to the target to consider finished adjusting (meters)";
+            this->declare_parameter<double>("target_distance_threshold", 0.1, target_distance_threshold_desc);
+
+            auto approach_rate_threshold_desc = rcl_interfaces::msg::ParameterDescriptor();
+            approach_rate_threshold_desc.description = "Minimum rate of distance reduction required between robot and target to consider finished adjusting(m/s)";
+            this->declare_parameter<double>("approach_rate_threshold", 0.03, kp_desc);
+
             auto odom_topic_desc = rcl_interfaces::msg::ParameterDescriptor();
             odom_topic_desc.description = "Robot odometry topic [nav_msgs/msg/Odometry]";
             this->declare_parameter<std::string>("odom_topic", "/Odometry", odom_topic_desc);
@@ -108,17 +116,19 @@ class GoalRotatorNode : public rclcpp::Node
             this->min_rotation_speed_ = this->get_parameter("min_rotation_speed").as_double();
             this->angle_tolerance_ = this->get_parameter("angle_tolerance").as_double();
             this->kp_ = this->get_parameter("kp").as_double();
+            this->target_distance_threshold_ = this->get_parameter("target_distance_threshold").as_double();
+            this->approach_rate_threshold_ = this->get_parameter("approach_rate_threshold").as_double();
             this->odom_topic_ = this->get_parameter("odom_topic").as_string();
             this->output_topic_ = this->get_parameter("output_topic").as_string();
             this->output_hz_ = this->get_parameter("output_hz").as_double();
             this->verbose_ = this->get_parameter("verbose").as_bool();
 
             /* Create subscribers and publishers */
-            pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(pose_topic_, 1, std::bind(&GoalRotatorNode::on_receive_pose_, this, std::placeholders::_1));
+            pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(pose_topic_, 1, std::bind(&GoalRotatorNode::on_receive_pose, this, std::placeholders::_1));
             pose_server_ = rclcpp_action::create_server<inspection_planner_interfaces::action::NavToPose>(
                 this,  
                 pose_server_name_, 
-                std::bind(&GoalRotatorNode::server_handle_pose_, this, std::placeholders::_1, std::placeholders::_2), 
+                std::bind(&GoalRotatorNode::server_handle_pose, this, std::placeholders::_1, std::placeholders::_2), 
                 std::bind(&GoalRotatorNode::server_handle_cancel, this, std::placeholders::_1), 
                 std::bind(&GoalRotatorNode::server_handle_accepted, this, std::placeholders::_1)
             );
@@ -158,6 +168,8 @@ class GoalRotatorNode : public rclcpp::Node
         double min_rotation_speed_;
         double angle_tolerance_;
         double kp_;
+        double target_distance_threshold_;
+        double approach_rate_threshold_;
         std::string odom_topic_;
         std::string output_topic_;
         double output_hz_;
@@ -181,7 +193,7 @@ class GoalRotatorNode : public rclcpp::Node
         std::shared_ptr<rclcpp::TimerBase> timer_;
 
         // States
-        const int IDLE = 0, NAVIGATING = 1, ROTATING = 2;
+        const int IDLE = 0, NAVIGATING = 1, ADJUSTING = 2, ROTATING = 3;
         std::atomic<int> state = 0;
         bool is_pose_from_server = false;
         std::shared_ptr<rclcpp_action::ServerGoalHandle<inspection_planner_interfaces::action::NavToPose>> active_goal_handle_{nullptr};
@@ -191,7 +203,9 @@ class GoalRotatorNode : public rclcpp::Node
         std::shared_ptr<nav_msgs::msg::Odometry> odom_;
         std::string odom_frame = "";
         std::string robot_frame = "";
-        geometry_msgs::msg::Twist curr_output_vel;
+        geometry_msgs::msg::Twist curr_output_vel_;
+        double prev_distance_ = 0.0;
+        rclcpp::Time prev_odom_time_;
 
         /**
          * @brief Get the goal point from pose object
@@ -209,7 +223,7 @@ class GoalRotatorNode : public rclcpp::Node
          * 
          * @param msg 
          */
-        void on_receive_pose_(std::shared_ptr<geometry_msgs::msg::PoseStamped> msg){
+        void on_receive_pose(std::shared_ptr<geometry_msgs::msg::PoseStamped> msg){
             std::lock_guard<std::mutex> lock(goal_handle_mutex_);
 
             if (active_goal_handle_ && active_goal_handle_->is_active()) {
@@ -238,7 +252,7 @@ class GoalRotatorNode : public rclcpp::Node
          * @param goal 
          * @return rclcpp_action::GoalResponse 
          */
-        rclcpp_action::GoalResponse server_handle_pose_(
+        rclcpp_action::GoalResponse server_handle_pose(
             const rclcpp_action::GoalUUID & uuid, 
             inspection_planner_interfaces::action::NavToPose::Goal::ConstSharedPtr goal)
         {
@@ -277,7 +291,7 @@ class GoalRotatorNode : public rclcpp::Node
                     goal_point.point = odom_->pose.pose.position;
                 }   
                 goal_point_pub_->publish(goal_point);
-                curr_output_vel = geometry_msgs::msg::Twist();
+                curr_output_vel_ = geometry_msgs::msg::Twist();
             }
             // goal_handle->canceled(result);
 
@@ -322,11 +336,13 @@ class GoalRotatorNode : public rclcpp::Node
 
             std::lock_guard<std::mutex> lock(goal_handle_mutex_);
             if (state == NAVIGATING){
-                state = ROTATING;
-                RCLCPP_INFO(this->get_logger(), "Done navigation, switching to ROTATING. Pose from server: %d", is_pose_from_server);
+                state = ADJUSTING;
+                this->prev_distance_ = 0.0;
+                this->prev_odom_time_ = this->get_clock()->now();
+                RCLCPP_INFO(this->get_logger(), "Done navigation, switching to ADJUSTING. Pose from server: %d", is_pose_from_server);
                 if (is_pose_from_server){
                     auto feedback = std::make_shared<inspection_planner_interfaces::action::NavToPose::Feedback>();
-                    feedback->state = ROTATING;
+                    feedback->state = ADJUSTING;
                     active_goal_handle_->publish_feedback(feedback);
                 }
             }
@@ -335,7 +351,7 @@ class GoalRotatorNode : public rclcpp::Node
         void on_receive_cmd_vel(std::shared_ptr<geometry_msgs::msg::Twist> msg){
             std::lock_guard<std::mutex> lock(goal_handle_mutex_);
             if (state != ROTATING){
-                curr_output_vel = *msg;
+                curr_output_vel_ = *msg;
             }
         }
 
@@ -343,7 +359,7 @@ class GoalRotatorNode : public rclcpp::Node
             std::lock_guard<std::mutex> lock(goal_handle_mutex_);
             if (state != ROTATING){
                 auto output = msg->twist;
-                curr_output_vel = output;
+                curr_output_vel_ = output;
             }
         }
         
@@ -363,10 +379,42 @@ class GoalRotatorNode : public rclcpp::Node
                 RCLCPP_INFO(this->get_logger(), "Goal canceled successfully.");
             }
 
+            geometry_msgs::msg::PoseStamped transformed_goal_pose;
+            convert_goal_pose_frame(goal_pose_, transformed_goal_pose);
+
+            if (state == ADJUSTING){
+                double odom_x = msg->pose.pose.position.x;
+                double odom_y = msg->pose.pose.position.y;
+                double goal_x = transformed_goal_pose.pose.position.x;
+                double goal_y = transformed_goal_pose.pose.position.y;
+                double diff_x = odom_x - goal_x;
+                double diff_y = odom_y - goal_y;
+                double distance = diff_x * diff_x + diff_y * diff_y;
+                if (distance <= (target_distance_threshold_*target_distance_threshold_)){
+                    state = ROTATING;
+                    curr_output_vel_ = geometry_msgs::msg::Twist();
+                    RCLCPP_INFO(this->get_logger(), "Done ADJUSTING, distance to goal < threshold.");
+                    return;
+                }
+
+                rclcpp::Time now = this->get_clock()->now();
+                if (prev_distance_ != 0.0){
+                    auto time_diff = now - prev_odom_time_;
+                    auto distance_change = distance - prev_distance_;
+                    auto approach_rate = distance_change / time_diff.seconds();
+                    if (approach_rate < this->approach_rate_threshold_){
+                        state = ROTATING;
+                        curr_output_vel_ = geometry_msgs::msg::Twist();
+                        RCLCPP_INFO(this->get_logger(), "Done ADJUSTING, distance to goal < threshold.");
+                        return;
+                    }
+                }
+                prev_distance_ = distance;
+                prev_odom_time_ = now;
+            }
+
             if (state == ROTATING){
-                // Convert goal pose to odom frame
-                geometry_msgs::msg::PoseStamped transformed_goal_pose;
-                convert_goal_pose_frame(goal_pose_, transformed_goal_pose);
+                // Convert goal pose to odom frame                
                 double target_yaw = tf2::getYaw(transformed_goal_pose.pose.orientation);
 
                 geometry_msgs::msg::Quaternion robot_quaternion = odom_->pose.pose.orientation;
@@ -384,7 +432,7 @@ class GoalRotatorNode : public rclcpp::Node
 
                 if (abs(yaw_diff) <= (angle_tolerance_ / 180.0 * 3.1415926)){
                     state = IDLE;
-                    curr_output_vel = geometry_msgs::msg::Twist();
+                    curr_output_vel_ = geometry_msgs::msg::Twist();
                     RCLCPP_INFO(this->get_logger(), "Done ROTATING, now IDLE. Pose from server: %d", is_pose_from_server);
                     
                     // pub action server result
@@ -406,8 +454,8 @@ class GoalRotatorNode : public rclcpp::Node
                     if (cmd_vel_angular_z < 0.0) cmd_vel_angular_z = -min_rotation_speed_;
                     else cmd_vel_angular_z = min_rotation_speed_; 
                 }
-                curr_output_vel = geometry_msgs::msg::Twist();
-                curr_output_vel.angular.z = cmd_vel_angular_z;
+                curr_output_vel_ = geometry_msgs::msg::Twist();
+                curr_output_vel_.angular.z = cmd_vel_angular_z;
             }
         }
         
@@ -433,7 +481,7 @@ class GoalRotatorNode : public rclcpp::Node
             geometry_msgs::msg::Twist output_vel;
             {
                 std::lock_guard<std::mutex> lock(goal_handle_mutex_);
-                output_vel = curr_output_vel;
+                output_vel = curr_output_vel_;
             }
             output_pub_->publish(output_vel);
         }

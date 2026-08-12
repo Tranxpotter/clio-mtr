@@ -7,9 +7,9 @@
     planner_cmd_vel_stamped_topic: "/cmd_vel"
     use_stamped_cmd_vel: true
     max_rotation_speed: 1.0
-    min_rotation_speed: 0.0
-    angle_tolerance: 10.0
-    kp: 1.5
+    min_rotation_speed: 0.1
+    angle_tolerance: 1.0
+    kp: 2.0
     odom_topic: "/robot_odom"
     output_topic: "/cmd_vel_out"
     output_hz: 50.0
