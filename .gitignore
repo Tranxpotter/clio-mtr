@@ -14,3 +14,5 @@ rosbags
 *.vgh
 *.pcd
 *.db
+*.log
+data/
