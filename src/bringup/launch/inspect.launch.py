@@ -137,9 +137,9 @@ def generate_launch_description():
     declare_plot, 
     
     nav, 
-    # waypoint_publisher, 
+    waypoint_publisher, 
     tsp_solver, 
     inspection_planner, 
-    inspection_poses_loader, 
+    # inspection_poses_loader, 
     robot_to_metacam_tf
     ])

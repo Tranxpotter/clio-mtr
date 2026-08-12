@@ -231,9 +231,9 @@ def generate_launch_description():
         executable="sensor_frame_corrector", 
         name="sensor_frame_corrector", 
         parameters=[{
-            "roll":0.0, 
-            "pitch":3.14159265359, 
-            "yaw":3.14159265359, 
+            "roll":3.14159265359, 
+            "pitch":0.0, 
+            "yaw":0.0, 
             "point_cloud_input_topic":"/cloud_registered", 
             "point_cloud_output_topic":"/cloud_registered_corrected", 
             "odometry_input_topic":"/Odometry", 
