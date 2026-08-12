@@ -93,7 +93,7 @@ InspectionPlannerNode::InspectionPlannerNode()
 
 
     // Debug topics
-    next_goal_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
+    next_goal_pub_ = this->create_publisher<ViewPose>(
         "/inspection_debug/next_goal", 
         5
     );
@@ -207,7 +207,7 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
             // No more tsp results
             if (unvisited_poses_.size() == 0){
                 RCLCPP_INFO(this->get_logger(), "All Inspection Waypoints Visited.");
-                geometry_msgs::msg::PoseStamped placeholder;
+                ViewPose placeholder;
                 next_goal_pub_->publish(placeholder);
                 return true; // FIXME: Review this return
             } else {
@@ -243,7 +243,11 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
     goal.pose.header.stamp = this->get_clock()->now();
     goal.pose.header.frame_id = "map";
 
-    next_goal_pub_->publish(goal.pose);
+    // Debug pose
+    ViewPose debug_pose;
+    debug_pose.pose = goal.pose.pose;
+    debug_pose.id = next_pose_id;
+    next_goal_pub_->publish(debug_pose);
 
     auto send_goal_options = rclcpp_action::Client<NavToPose>::SendGoalOptions();
         send_goal_options.goal_response_callback =

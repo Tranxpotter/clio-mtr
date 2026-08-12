@@ -25,6 +25,7 @@
 
 using NavToPose = inspection_planner_interfaces::action::NavToPose;
 using NavGoalHandle = rclcpp_action::ClientGoalHandle<NavToPose>;
+using ViewPose = inspection_planner_interfaces::msg::ViewPose;
 using ViewPoses = inspection_planner_interfaces::msg::ViewPoses;
 using SolveTsp = inspection_planner_interfaces::srv::SolveTsp;
 using Waypoints = inspection_planner_interfaces::msg::Waypoints;
@@ -45,7 +46,7 @@ class InspectionPlannerNode : public rclcpp::Node
         rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
 
         // Debug pubs
-        rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr next_goal_pub_;
+        rclcpp::Publisher<ViewPose>::SharedPtr next_goal_pub_;
 
         // TODO: Visualizer topics
 

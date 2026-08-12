@@ -3,6 +3,7 @@ import os
 import rclpy
 import rclpy.time
 from rclpy.node import Node
+from inspection_planner_interfaces.msg import ViewPose
 from geometry_msgs.msg import PoseStamped
 from tf2_ros import Buffer, TransformListener
 
@@ -27,7 +28,7 @@ class NavAccuracyLogger(Node):
 
         # Pose Subscriber
         self.sub = self.create_subscription(
-            PoseStamped,
+            ViewPose,
             pose_topic,
             self.pose_callback,
             10
@@ -39,14 +40,16 @@ class NavAccuracyLogger(Node):
 
         # State storage
         self.prev_pose = None
+        self.prev_id = None
 
         self.get_logger().info(f"Subscribed to '{pose_topic}'. Output logging to terminal and '{os.path.abspath(self.log_file_path)}'")
 
-    def pose_callback(self, msg: PoseStamped):
+    def pose_callback(self, msg: ViewPose):
         # 1. First pose incoming: store and wait for the next
         if self.prev_pose is None:
             self.prev_pose = msg.pose
-            self.get_logger().info("Received first pose. Stored as prev_pose.")
+            self.prev_id = msg.id
+            self.get_logger().info(f"Received first pose. ID: {msg.id} Stored as prev_pose.")
             return
 
         # 2. Subsequent pose incoming: look up current TF transform map -> robot_footprint
@@ -81,6 +84,7 @@ class NavAccuracyLogger(Node):
         # Format the log output
         log_entry = (
             f"--- Pose Comparison ---\n"
+            f"Viewpose ID: {self.prev_id}\n"
             f"Position Diff (dx: {dx:.3f}m, dy: {dy:.3f}m, dz: {dz:.3f}m) | Euclidean: {euc_dist:.3f}m\n"
             f"Robot Current Yaw: {math.degrees(robot_yaw):.2f}° | Prev Pose Yaw: {math.degrees(prev_yaw):.2f}°\n"
             f"Yaw Difference: {math.degrees(yaw_diff):.2f}° ({yaw_diff:.4f} rad)\n"
@@ -96,6 +100,7 @@ class NavAccuracyLogger(Node):
 
         # 3. Replace prev_pose with the incoming pose
         self.prev_pose = msg.pose
+        self.prev_id = msg.id
 
 
 def main(args=None):
