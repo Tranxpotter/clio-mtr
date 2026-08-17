@@ -60,6 +60,8 @@ class InspectionPlannerNode : public rclcpp::Node
         // Other params
         double pose_merge_distance_tolerance_;
         double pose_merge_angular_tolerance_;
+        double redo_tsp_period_;
+        int success_count_for_retry_threshold_;
 
 
         /* Subscriber and Server Callbacks */
@@ -107,11 +109,17 @@ class InspectionPlannerNode : public rclcpp::Node
         /* Attributes */
         std::unordered_map<uint32_t, geometry_msgs::msg::Pose> unvisited_poses_;
         std::unordered_map<uint32_t, geometry_msgs::msg::Pose> visited_poses_;
+        std::unordered_map<uint32_t, geometry_msgs::msg::Pose> failed_poses_;
         std::vector<uint32_t> tsp_result_;
-        std::vector<uint32_t> failed_ids_;
+
+        rclcpp::TimerBase::SharedPtr redo_tsp_timer_{nullptr};
 
         bool waiting_new_tsp_result_ = false;
         int curr_nav_tsp_index_ = 0;
+        uint8_t nav_state_ = 0;
+        bool allow_pub_new_waypoint_ = true;
+
+        int success_count_for_retry_ = 0;
         
 
 
@@ -120,8 +128,6 @@ class InspectionPlannerNode : public rclcpp::Node
         int curr_nav_goal_ = -1;
         bool inspection_active = false;
         bool planner_found_path_ = true;
-
-        void start_inspection();
 
         void pause_inspection();
 
@@ -139,7 +145,13 @@ class InspectionPlannerNode : public rclcpp::Node
 
         void nav_result_callback(const NavGoalHandle::WrappedResult& result, int goal_id);
 
-
+        /**
+         * @brief Publish unvisited waypoints for new distance matrix
+         * 
+         * @return true 
+         * @return false 
+         */
+        void get_new_distance_matrix();
 
         /* Helper funcs */
         

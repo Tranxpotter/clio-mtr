@@ -41,6 +41,15 @@ InspectionPlannerNode::InspectionPlannerNode()
     pose_merge_angular_tolerance_desc.description = "Angular tolerance in radians. Poses within tolerance will be considered as the same. Both dist and angular tolerance must be passed.";
     this->declare_parameter<double>("pose_merge_angular_tolerance", 0.349066, pose_merge_angular_tolerance_desc);
 
+    auto redo_tsp_period_desc = rcl_interfaces::msg::ParameterDescriptor();
+    redo_tsp_period_desc.description = "Recalculates TSP result on this period while navigating.";
+    this->declare_parameter<double>("redo_tsp_period", 5.0, redo_tsp_period_desc);
+
+    auto success_count_for_retry_threshold_desc = rcl_interfaces::msg::ParameterDescriptor();
+    success_count_for_retry_threshold_desc.description = "Adds failed poses to tsp calculation if threshold amount of viewposes successfully reached.";
+    this->declare_parameter<int>("success_count_for_retry_threshold", 5, success_count_for_retry_threshold_desc);
+
+
     // Get parameters
     inspection_poses_sub_topic_ = this->get_parameter("inspection_poses_topic").as_string();
     nav_action_server_name_ = this->get_parameter("nav_action_server_name").as_string();
@@ -51,7 +60,8 @@ InspectionPlannerNode::InspectionPlannerNode()
 
     pose_merge_distance_tolerance_ = this->get_parameter("pose_merge_distance_tolerance").as_double();
     pose_merge_angular_tolerance_ = this->get_parameter("pose_merge_angular_tolerance").as_double();
-
+    redo_tsp_period_ = this->get_parameter("redo_tsp_period").as_double();
+    success_count_for_retry_threshold_ = this->get_parameter("success_count_for_retry_threshold").as_int();
 
 
 
@@ -102,6 +112,8 @@ InspectionPlannerNode::InspectionPlannerNode()
 
 
 
+
+
 void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr msg){
     RCLCPP_INFO(this->get_logger(), "Received new inspection poses. Number of poses: %ld", msg->poses.size());
     std::unordered_map<uint32_t, geometry_msgs::msg::Pose> new_pose_map;
@@ -116,16 +128,11 @@ void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr
     
     merge_poses_maps(unvisited_poses_, new_pose_map);
     
-    Waypoints waypoints_msg;
-    build_waypoints_msg(unvisited_poses_, waypoints_msg);
-    tsp_waypoints_pub_->publish(waypoints_msg);
-    waiting_new_tsp_result_ = true;
+    get_new_distance_matrix(); // TODO: Review whether not cancelling old goal first will cause infinite loop of abortion
 }
 
 void InspectionPlannerNode::distance_matrix_callback(const TspDistanceMatrix::SharedPtr msg){
-    RCLCPP_DEBUG(this->get_logger(), "Received new distance matrix. Pausing robot navigation. Requesting TSP Solver.");
-
-    pause_inspection();
+    RCLCPP_DEBUG(this->get_logger(), "Received new distance matrix. Requesting TSP Solver.");
 
     auto request = std::make_shared<SolveTsp::Request>();
     request->matrix = *msg;
@@ -144,8 +151,41 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
         RCLCPP_ERROR(this->get_logger(), "TSP solver failed: %s", response->message.c_str());
         this->tsp_result_.clear();
     }
+    waiting_new_tsp_result_ = false;
+
+    // For every viewpose that is not in tsp result, put them in the 'failed' list
+    std::string failed_poses_log;
+    for (auto itr = unvisited_poses_.begin(); itr != unvisited_poses_.end();){
+        auto pose = *itr;
+        bool found = false;
+        for (auto valid_pose_id : tsp_result_){
+            if (valid_pose_id == pose.first){
+                found = true;
+                break;
+            }
+        }
+        if (!found){
+            failed_poses_log += std::to_string(pose.first) + " ";
+            failed_poses_[pose.first] = pose.second;
+            unvisited_poses_.erase(itr);
+        } else {
+            itr++;
+        }
+    }
+
+    if (!failed_poses_log.empty()){
+        RCLCPP_INFO(this->get_logger(), "The following waypoints failed: %s", failed_poses_log);
+    }
+
+    if (tsp_result_.empty()){
+        pause_inspection();
+        RCLCPP_INFO(this->get_logger(), "Inspection complete."); // TODO: inspection statistics, placeholder next waypoint?
+        return;
+    }
+
     curr_nav_tsp_index_ = 0;
-    start_inspection();
+    inspection_active = true;
+    pub_next_nav_goal();
 }
 
 
@@ -154,10 +194,12 @@ void InspectionPlannerNode::planner_status_callback(const std_msgs::msg::Bool::S
     RCLCPP_INFO(this->get_logger(), "Planner status: %d", planner_found_path_);
     if (msg->data) return;
 
-    Waypoints waypoints_msg;
-    build_waypoints_msg(unvisited_poses_, waypoints_msg);
-    tsp_waypoints_pub_->publish(waypoints_msg);
-    waiting_new_tsp_result_ = true;
+    pause_inspection();
+
+    // Set current inspection pose as failed pose
+    this->failed_poses_[curr_nav_goal_] = this->unvisited_poses_.extract(curr_nav_goal_).mapped();
+
+    this->get_new_distance_matrix();
 }
 
 
@@ -168,20 +210,13 @@ void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request
     unvisited_poses_.clear();
     visited_poses_.clear();
     tsp_result_.clear();
-    failed_ids_.clear();
+    failed_poses_.clear();
     pause_inspection();
 }
 
 
 
 
-
-
-void InspectionPlannerNode::start_inspection(){
-    inspection_active = true;
-    RCLCPP_INFO(this->get_logger(), "Starting inspection...");
-    pub_next_nav_goal();
-}
 
 
 void InspectionPlannerNode::pause_inspection(){
@@ -204,17 +239,9 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
     // Search for valid nav goal pose id
     while (true){
         if (curr_nav_tsp_index_ >= tsp_result_.size()){
-            // No more tsp results
-            if (unvisited_poses_.size() == 0){
-                RCLCPP_INFO(this->get_logger(), "All Inspection Waypoints Visited.");
-                ViewPose placeholder;
-                next_goal_pub_->publish(placeholder);
-                return true; // FIXME: Review this return
-            } else {
-                RCLCPP_INFO(this->get_logger(), "No TSP result, fall back to direct waypoint navigation.");
-                next_pose_id = unvisited_poses_.begin()->first;
-            }
-            break;
+            RCLCPP_INFO(this->get_logger(), "No more TSP result, requesting for new TSP result.");
+            this->get_new_distance_matrix();
+            return true;
         }
         auto next_tsp_id = tsp_result_[curr_nav_tsp_index_];
         curr_nav_tsp_index_++;
@@ -231,6 +258,9 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
     if (!nav_action_client_->action_server_is_ready()) {
         RCLCPP_ERROR(this->get_logger(), "Navigation action server is not available!");
         return false; 
+    }
+    if (curr_nav_goal_ == next_pose_id){
+        return false;
     }
     curr_nav_goal_ = next_pose_id;
     auto goal_pose = unvisited_poses_.at(curr_nav_goal_);
@@ -258,6 +288,21 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
         std::bind(&InspectionPlannerNode::nav_result_callback, this, std::placeholders::_1, next_pose_id);
     nav_action_client_->async_send_goal(goal, send_goal_options);
 
+    // Redo tsp timer
+    if (this->redo_tsp_timer_ && !this->redo_tsp_timer_->is_canceled()){
+        this->redo_tsp_timer_->cancel();
+    }
+    this->redo_tsp_timer_ = this->create_wall_timer(
+        std::chrono::duration<double>(this->redo_tsp_period_), 
+        [this](){
+            if (allow_pub_new_waypoint_ && inspection_active && !waiting_new_tsp_result_){
+                get_new_distance_matrix();
+            } else {
+                this->redo_tsp_timer_->cancel();
+            }
+        }
+    );
+
     return true;
 }
 
@@ -277,7 +322,14 @@ void InspectionPlannerNode::nav_feedback_callback(
 )
 {
     (void)goal_handle;
+    nav_state_ = feedback->state;
     RCLCPP_DEBUG(this->get_logger(), "Received feedback from navigator, code: %d", feedback->state);
+    if (feedback->state > 1){
+        RCLCPP_INFO(this->get_logger(), "Waiting for adjusting / rotating: %d", feedback->state);
+        allow_pub_new_waypoint_ = false;
+    } else {
+        allow_pub_new_waypoint_ = true;
+    }
 }
 
 void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResult& result, int goal_id){
@@ -291,10 +343,11 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
             RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
         } else {
             visited_poses_.insert(std::move(node));
+            this->success_count_for_retry_++;
             RCLCPP_INFO(this->get_logger(), "Completed navigation to inspection pose. ID: %d", goal_id);
         }
     }
-    else if (result.code == rclcpp_action::ResultCode::ABORTED){
+    else if (result.code == rclcpp_action::ResultCode::ABORTED){ // TODO: Would this create an infinite loop? Perhaps when 2 inspection poses list are sent too quickly? 
         RCLCPP_ERROR(this->get_logger(), "Goal was aborted! ID: %d", goal_id);
         if (!node){
             RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
@@ -313,9 +366,37 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         }
     }
 
-    pub_next_nav_goal();
+    this->get_new_distance_matrix();
 }
 
+
+void InspectionPlannerNode::get_new_distance_matrix(){
+    if (unvisited_poses_.size() == 0){
+        if (failed_poses_.size() == 0){
+            inspection_active = false; // Maybe call pause_inspection()?
+            RCLCPP_INFO(this->get_logger(), "Inspection complete. All inspection poses visited."); // TODO: placeholder next waypoint?
+            return;
+        }
+        for (auto& [id, pose] : failed_poses_){
+            unvisited_poses_[id] = pose;
+        }
+        failed_poses_.clear();
+    }
+
+    if (this->success_count_for_retry_ >= this->success_count_for_retry_threshold_){
+        for (auto& [id, pose] : failed_poses_){
+            unvisited_poses_[id] = pose;
+        }
+        failed_poses_.clear();
+        this->success_count_for_retry_ = 0;
+    }
+
+    Waypoints waypoints_msg;
+    build_waypoints_msg(unvisited_poses_, waypoints_msg);
+    tsp_waypoints_pub_->publish(waypoints_msg);
+    waiting_new_tsp_result_ = true;
+    return;
+}
 
 // My version, idk if the code is actually valid
 // void InspectionPlannerNode::merge_similar_poses(std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& new_poses){

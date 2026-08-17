@@ -264,6 +264,7 @@ class GoalRotatorNode : public rclcpp::Node
                 auto result = std::make_shared<inspection_planner_interfaces::action::NavToPose::Result>();
                 result->result = false;
                 active_goal_handle_->abort(result);
+                active_goal_handle_ = nullptr;
             }
 
             goal_pose_ = goal->pose;
