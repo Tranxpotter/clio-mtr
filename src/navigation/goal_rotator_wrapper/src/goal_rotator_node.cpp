@@ -379,6 +379,8 @@ class GoalRotatorNode : public rclcpp::Node
                 RCLCPP_INFO(this->get_logger(), "Goal canceled successfully.");
             }
 
+            if (state == IDLE || state == NAVIGATING) return;
+
             geometry_msgs::msg::PoseStamped transformed_goal_pose;
             convert_goal_pose_frame(goal_pose_, transformed_goal_pose);
 
@@ -390,22 +392,28 @@ class GoalRotatorNode : public rclcpp::Node
                 double diff_x = odom_x - goal_x;
                 double diff_y = odom_y - goal_y;
                 double distance = diff_x * diff_x + diff_y * diff_y;
+                if (verbose_){
+                    RCLCPP_INFO(this->get_logger(), "ADJUSTING, distance to goal: %lf", distance);    
+                }
                 if (distance <= (target_distance_threshold_*target_distance_threshold_)){
                     state = ROTATING;
                     curr_output_vel_ = geometry_msgs::msg::Twist();
-                    RCLCPP_INFO(this->get_logger(), "Done ADJUSTING, distance to goal < threshold.");
+                    RCLCPP_INFO(this->get_logger(), "Done ADJUSTING, now ROTATING, distance to goal < threshold.");
                     return;
                 }
 
                 rclcpp::Time now = this->get_clock()->now();
                 if (prev_distance_ != 0.0){
                     auto time_diff = now - prev_odom_time_;
-                    auto distance_change = distance - prev_distance_;
+                    auto distance_change = prev_distance_ - distance;
                     auto approach_rate = distance_change / time_diff.seconds();
+                    if (verbose_){
+                        RCLCPP_INFO(this->get_logger(), "ADJUSTING, approach rate: %lf", approach_rate);
+                    }
                     if (approach_rate < this->approach_rate_threshold_){
                         state = ROTATING;
                         curr_output_vel_ = geometry_msgs::msg::Twist();
-                        RCLCPP_INFO(this->get_logger(), "Done ADJUSTING, distance to goal < threshold.");
+                        RCLCPP_INFO(this->get_logger(), "Done ADJUSTING, now ROTATING, approach rate < threshold.");
                         return;
                     }
                 }
