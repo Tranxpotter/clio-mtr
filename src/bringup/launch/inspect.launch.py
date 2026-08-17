@@ -109,7 +109,11 @@ def generate_launch_description():
     inspection_poses_loader = Node(
         package="inspection_planner_test", 
         executable="inspection_poses_loader", 
-        name="inspection_poses_loader"
+        name="inspection_poses_loader", 
+        parameters=[{
+            "target_frame": "map",
+            "source_frame": "map"
+        }]
     )
 
     # Metacam and robot static tf
@@ -137,9 +141,9 @@ def generate_launch_description():
     declare_plot, 
     
     nav, 
-    waypoint_publisher, 
+    # waypoint_publisher, 
     tsp_solver, 
     inspection_planner, 
-    # inspection_poses_loader, 
+    inspection_poses_loader, 
     robot_to_metacam_tf
     ])

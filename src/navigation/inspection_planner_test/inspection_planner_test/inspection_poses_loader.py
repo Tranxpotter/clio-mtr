@@ -9,25 +9,18 @@ Usage:
 
 Call the service:
     ros2 service call /load_inspection_poses inspection_planner_interfaces/srv/LoadInspectionPoses "{db_path: '/path/to/file.db'}"
-
-
 """
 
 import os
+import sqlite3
 import rclpy
 from rclpy.node import Node
 from inspection_planner_interfaces.msg import ViewPoses, ViewPose
 from inspection_planner_interfaces.srv import LoadInspectionPoses
 from geometry_msgs.msg import Pose, Point, Quaternion
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 import tf2_ros
 import rclpy.time
 import tf2_geometry_msgs
-
-import sqlite3
-
-
-
 
 
 class InspectionPosesLoader(Node):
@@ -48,7 +41,6 @@ class InspectionPosesLoader(Node):
             self.tf_buffer = tf2_ros.Buffer()
             self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-
         self.publisher = self.create_publisher(ViewPoses, '/inspection_poses', 5)
 
         self.srv = self.create_service(
@@ -56,9 +48,7 @@ class InspectionPosesLoader(Node):
             '/load_inspection_poses',
             self._handle_publish_request
         )
-        self.get_logger().info(
-            'Service /load_inspection_poses is ready.'
-        )
+        self.get_logger().info('Service /load_inspection_poses is ready.')
 
     def _handle_publish_request(
         self,
@@ -88,22 +78,26 @@ class InspectionPosesLoader(Node):
             response.waypoints_published = 0
             return response
 
-        # Check if inspection_poses table exists
+        # Check if abnormal_detections and images tables exist
         cur.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='inspection_poses'"
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('abnormal_detections', 'images')"
         )
-        if cur.fetchone() is None:
+        existing_tables = {row[0] for row in cur.fetchall()}
+        if not {'abnormal_detections', 'images'}.issubset(existing_tables):
             conn.close()
             response.success = False
-            response.message = 'Table "inspection_poses" does not exist in database.'
+            response.message = 'Database missing required "abnormal_detections" or "images" tables.'
             response.waypoints_published = 0
             return response
 
-        # Get inspection poses from database
+        # Get inspection poses by joining abnormal_detections and images
         cur.execute(
-            "SELECT id, tf_translation_x, tf_translation_y, tf_translation_z, "
-            "tf_rotation_x, tf_rotation_y, tf_rotation_z, tf_rotation_w "
-            "FROM inspection_poses"
+            "SELECT DISTINCT img.id, "
+            "img.tf_translation_x, img.tf_translation_y, img.tf_translation_z, "
+            "img.tf_rotation_x, img.tf_rotation_y, img.tf_rotation_z, img.tf_rotation_w "
+            "FROM abnormal_detections ad "
+            "JOIN images img ON ad.gt_image = img.id"
         )
         rows = cur.fetchall()
         conn.close()
@@ -144,7 +138,6 @@ class InspectionPosesLoader(Node):
             pose = self.transform_pose(pose)
             vp.pose = pose
 
-
             msg.poses.append(vp)
 
         self.publisher.publish(msg)
@@ -164,14 +157,11 @@ class InspectionPosesLoader(Node):
             transform = self.tf_buffer.lookup_transform(
                 self.target_frame, self.source_frame, rclpy.time.Time()
             )
-
             transformed_pose = tf2_geometry_msgs.do_transform_pose(pose, transform)
             return transformed_pose
         except Exception as e:
             self.get_logger().warn(f"Cannot transform pose from {self.source_frame} to {self.target_frame}.")
             return pose
-
-
 
 
 def main(args=None):
