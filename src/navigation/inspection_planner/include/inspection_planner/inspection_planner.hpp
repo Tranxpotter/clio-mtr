@@ -126,10 +126,14 @@ class InspectionPlannerNode : public rclcpp::Node
         /* Navigation Handlers and Callbacks */
         NavGoalHandle::SharedPtr nav_goal_handle_;
         int curr_nav_goal_ = -1;
-        bool inspection_active = false;
+        bool inspection_active = false; // Whether inspection is ongoing or not
         bool planner_found_path_ = true;
 
-        void pause_inspection();
+        /**
+         * @brief Cancels current navigation goal when called
+         * 
+         */
+        void cancel_current_goal();
 
         /**
          * @brief 

@@ -167,7 +167,7 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
         if (!found){
             failed_poses_log += std::to_string(pose.first) + " ";
             failed_poses_[pose.first] = pose.second;
-            unvisited_poses_.erase(itr);
+            itr = unvisited_poses_.erase(itr);
         } else {
             itr++;
         }
@@ -178,7 +178,8 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
     }
 
     if (tsp_result_.empty()){
-        pause_inspection();
+        inspection_active = false;
+        cancel_current_goal();
         RCLCPP_INFO(this->get_logger(), "Inspection complete."); // TODO: inspection statistics, placeholder next waypoint?
         return;
     }
@@ -194,12 +195,10 @@ void InspectionPlannerNode::planner_status_callback(const std_msgs::msg::Bool::S
     RCLCPP_INFO(this->get_logger(), "Planner status: %d", planner_found_path_);
     if (msg->data) return;
 
-    pause_inspection();
+    cancel_current_goal();
 
     // Set current inspection pose as failed pose
     this->failed_poses_[curr_nav_goal_] = this->unvisited_poses_.extract(curr_nav_goal_).mapped();
-
-    this->get_new_distance_matrix();
 }
 
 
@@ -207,11 +206,13 @@ void InspectionPlannerNode::planner_status_callback(const std_msgs::msg::Bool::S
 void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request::SharedPtr request, std_srvs::srv::Trigger::Response::SharedPtr response){
     (void) request;
     (void) response;
+    RCLCPP_INFO(this->get_logger(), "Resetting inspection...");
     unvisited_poses_.clear();
     visited_poses_.clear();
     tsp_result_.clear();
     failed_poses_.clear();
-    pause_inspection();
+    inspection_active = false;
+    cancel_current_goal();
 }
 
 
@@ -219,8 +220,7 @@ void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request
 
 
 
-void InspectionPlannerNode::pause_inspection(){
-    inspection_active = false;
+void InspectionPlannerNode::cancel_current_goal(){
     if (nav_goal_handle_){
         auto status = nav_goal_handle_->get_status();
         if (status == rclcpp_action::GoalStatus::STATUS_ACCEPTED || 
@@ -352,6 +352,7 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         if (!node){
             RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
         }
+        return;
     }
     else if (result.code == rclcpp_action::ResultCode::CANCELED){
         RCLCPP_INFO(this->get_logger(), "Goal was canceled! ID: %d", goal_id);
@@ -366,14 +367,16 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         }
     }
 
-    this->get_new_distance_matrix();
+    if (inspection_active){
+        this->get_new_distance_matrix();
+    }
 }
 
 
 void InspectionPlannerNode::get_new_distance_matrix(){
     if (unvisited_poses_.size() == 0){
         if (failed_poses_.size() == 0){
-            inspection_active = false; // Maybe call pause_inspection()?
+            inspection_active = false;
             RCLCPP_INFO(this->get_logger(), "Inspection complete. All inspection poses visited."); // TODO: placeholder next waypoint?
             return;
         }
