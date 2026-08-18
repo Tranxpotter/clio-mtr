@@ -196,9 +196,6 @@ void InspectionPlannerNode::planner_status_callback(const std_msgs::msg::Bool::S
     if (msg->data) return;
 
     cancel_current_goal();
-
-    // Set current inspection pose as failed pose
-    this->failed_poses_[curr_nav_goal_] = this->unvisited_poses_.extract(curr_nav_goal_).mapped();
 }
 
 
@@ -350,6 +347,8 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         RCLCPP_ERROR(this->get_logger(), "Goal was aborted! ID: %d", goal_id);
         if (!node){
             RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
+        } else {
+            this->failed_poses_[node.key()] = node.mapped();
         }
         return;
     }
@@ -357,12 +356,17 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         RCLCPP_INFO(this->get_logger(), "Goal was canceled! ID: %d", goal_id);
         if (!node){
             RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
+        } else {
+            this->failed_poses_[node.key()] = node.mapped();
         }
+        
     }
     else{
         RCLCPP_ERROR(this->get_logger(), "Unknown result code. ID: %d", goal_id);
         if (!node){
             RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
+        } else {
+            this->failed_poses_[node.key()] = node.mapped();
         }
     }
 
