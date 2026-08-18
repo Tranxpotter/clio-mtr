@@ -115,7 +115,7 @@ class InspectionPlannerNode : public rclcpp::Node
         rclcpp::TimerBase::SharedPtr redo_tsp_timer_{nullptr};
 
         bool waiting_new_tsp_result_ = false;
-        int curr_nav_tsp_index_ = 0;
+        size_t curr_nav_tsp_index_ = 0;
         uint8_t nav_state_ = 0;
         bool allow_pub_new_waypoint_ = true;
 

@@ -174,7 +174,7 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
     }
 
     if (!failed_poses_log.empty()){
-        RCLCPP_INFO(this->get_logger(), "The following waypoints failed: %s", failed_poses_log);
+        RCLCPP_INFO(this->get_logger(), "The following waypoints failed: %s", failed_poses_log.c_str());
     }
 
     if (tsp_result_.empty()){
