@@ -229,8 +229,7 @@ void InspectionPlannerNode::cancel_current_goal(){
             RCLCPP_INFO(this->get_logger(), "Cancelling navigation goal pose...");
             nav_action_client_->async_cancel_goal(nav_goal_handle_);
         }
-        nav_goal_handle_ = nullptr;
-    }   
+    }
 }
 
 
