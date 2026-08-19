@@ -75,7 +75,8 @@ def generate_launch_description():
             "remapper":launch_remapper, 
             "bag_path":bag_path, 
             "record_bag":record_bag, 
-            "plot":plot
+            "plot":plot, 
+            "far_rviz":"False"
         }.items()
     )
 
@@ -85,26 +86,14 @@ def generate_launch_description():
         name="viewpose_publisher_service"
     )
 
-    tsp_solver = Node(
-        package="inspection_planner", 
-        executable="tsp_solver", 
-        name="tsp_solver"
-    )
-
-    inspection_planner = Node(
-        package="inspection_planner", 
-        executable="inspection_planner", 
-        name="inspection_planner",
-        parameters=[{
-            "inspection_poses_topic": "/inspection_poses",
-            "nav_action_server_name": "/nav_to_pose",
-            "tsp_solver": "/solve_tsp",
-            "tsp_waypoints_topic": "/inspection_waypoints",
-            "tsp_distance_matrix_topic": "/tsp_distance_matrix",
-            "pose_merge_distance_tolerance": 0.3,
-            "pose_merge_angular_tolerance": 0.349066, 
-            "use_tsp":False, 
-        }]
+    inspection_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                get_package_share_directory("inspection_planner"), 
+                "launch", 
+                "inspect.launch.py"
+            ])
+        )
     )
 
     inspection_poses_loader = Node(
@@ -124,7 +113,7 @@ def generate_launch_description():
         name="robot_to_metacam", 
         arguments=[
             '0.03', '0', '0.18',     # x and z axis diff
-            '0.111701', '0.349066', '0',   # 20 degrees pitch  6.4 degrees yaw for forcefully matching waypoints
+            '0.0', '0.349066', '0',   # 20 degrees pitch  6.4 degrees yaw for forcefully matching waypoints
             'map', 'metacam'
         ]
     )
@@ -143,8 +132,7 @@ def generate_launch_description():
     
     nav, 
     waypoint_publisher, 
-    tsp_solver, 
-    inspection_planner, 
+    inspection_launch, 
     inspection_poses_loader, 
     robot_to_metacam_tf
     ])

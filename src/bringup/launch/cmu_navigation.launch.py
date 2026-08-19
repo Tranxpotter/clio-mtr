@@ -73,6 +73,7 @@ def generate_launch_description():
     declare_bag = DeclareLaunchArgument('record_bag', default_value="True")
     declare_bag_path = DeclareLaunchArgument('bag_path', default_value="rosbags/")
     declare_plot = DeclareLaunchArgument('plot', default_value="False")
+    declare_far_rviz = DeclareLaunchArgument('far_rviz', default_value="True")
 
     use_bag = LaunchConfiguration('use_bag')
     launch_fastlio = LaunchConfiguration('fastlio')
@@ -84,6 +85,7 @@ def generate_launch_description():
     bag_path = LaunchConfiguration('bag_path')
     record_bag = LaunchConfiguration('record_bag')
     plot = LaunchConfiguration('plot')
+    far_rviz = LaunchConfiguration('far_rviz')
 
     # Livox ros driver 2
     driver = IncludeLaunchDescription(
@@ -272,7 +274,8 @@ def generate_launch_description():
                     get_package_share_directory('far_planner'), 'launch', 'far_planner.launch')
                 ), 
                 launch_arguments={
-                    "use_sim_time":use_bag
+                    "use_sim_time":use_bag, 
+                    "rviz":far_rviz
                 }.items()
             )
         ]
@@ -381,6 +384,7 @@ def generate_launch_description():
     declare_bag, 
     declare_bag_path, 
     declare_plot, 
+    declare_far_rviz, 
     driver, 
     fastlio_group, 
     static_odom_node, 

@@ -695,18 +695,16 @@ void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& tar
 void InspectionPlannerNode::update_visualization(){
     visualization_msgs::msg::MarkerArray marker_array;
 
-    int marker_id = 0;
-
     // Helper lambda to create a sphere marker for a single waypoint
-    auto create_marker = [&](uint32_t /*id*/, const geometry_msgs::msg::Pose& pose,
-                             const std::string& ns, int& current_id,
+    auto create_marker = [&](uint32_t id, const geometry_msgs::msg::Pose& pose,
+                             const std::string& ns, 
                              float r, float g, float b)
     {
         visualization_msgs::msg::Marker marker;
         marker.header.frame_id = "map";
         marker.header.stamp = this->get_clock()->now();
         marker.ns = ns;
-        marker.id = current_id++;
+        marker.id = id;
         marker.type = visualization_msgs::msg::Marker::SPHERE;
         marker.action = visualization_msgs::msg::Marker::ADD;
 
@@ -731,17 +729,67 @@ void InspectionPlannerNode::update_visualization(){
 
     // Unvisited waypoints — blue
     for (const auto& [id, pose] : unvisited_poses_){
-        create_marker(id, pose, "unvisited", marker_id, 0.0f, 0.0f, 1.0f);
+        create_marker(id, pose, "inspection_pose", 0.0f, 0.0f, 1.0f);
     }
 
     // Visited waypoints — green
     for (const auto& [id, pose] : visited_poses_){
-        create_marker(id, pose, "visited", marker_id, 0.0f, 1.0f, 0.0f);
+        create_marker(id, pose, "inspection_pose", 0.0f, 1.0f, 0.0f);
     }
 
     // Failed waypoints — red
     for (const auto& [id, pose] : failed_poses_){
-        create_marker(id, pose, "failed", marker_id, 1.0f, 0.0f, 0.0f);
+        create_marker(id, pose, "inspection_pose", 1.0f, 0.0f, 0.0f);
+    }
+
+    // Helper to look up a pose from any of the three maps
+    auto find_pose = [&](uint32_t id) -> const geometry_msgs::msg::Pose* {
+        auto it = unvisited_poses_.find(id);
+        if (it != unvisited_poses_.end()) return &it->second;
+        it = visited_poses_.find(id);
+        if (it != visited_poses_.end()) return &it->second;
+        it = failed_poses_.find(id);
+        if (it != failed_poses_.end()) return &it->second;
+        return nullptr;
+    };
+
+    // Draw arrows between consecutive TSP waypoints showing visit order
+    if (tsp_result_.size() > 1){
+        for (size_t i = 0; i < tsp_result_.size() - 1; ++i){
+            const auto* from_pose = find_pose(tsp_result_[i]);
+            const auto* to_pose   = find_pose(tsp_result_[i + 1]);
+            if (!from_pose || !to_pose) continue;
+
+            visualization_msgs::msg::Marker arrow;
+            arrow.header.frame_id = "map";
+            arrow.header.stamp = this->get_clock()->now();
+            arrow.ns = "tsp_edges";
+            arrow.id = 10000 + i;  // offset to avoid collision with waypoint IDs
+            arrow.type = visualization_msgs::msg::Marker::ARROW;
+            arrow.action = visualization_msgs::msg::Marker::ADD;
+
+            arrow.points.emplace_back();
+            arrow.points.back().x = from_pose->position.x;
+            arrow.points.back().y = from_pose->position.y;
+            arrow.points.back().z = from_pose->position.z;
+
+            arrow.points.emplace_back();
+            arrow.points.back().x = to_pose->position.x;
+            arrow.points.back().y = to_pose->position.y;
+            arrow.points.back().z = to_pose->position.z;
+
+            arrow.scale.x = 0.1;  // shaft radius
+            arrow.scale.y = 0.2;  // head radius
+
+            arrow.color.r = 0.8f;
+            arrow.color.g = 0.0f;
+            arrow.color.b = 0.3f;
+            arrow.color.a = 0.6f;
+
+            arrow.lifetime = rclcpp::Duration(0, 0);
+
+            marker_array.markers.push_back(arrow);
+        }
     }
 
     waypoint_viz_pub_->publish(marker_array);
