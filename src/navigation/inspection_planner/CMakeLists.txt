@@ -13,6 +13,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(inspection_planner_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
@@ -37,6 +38,7 @@ ament_target_dependencies(inspection_planner
   rclcpp_action
   inspection_planner_interfaces
   geometry_msgs
+  visualization_msgs
   std_msgs
   std_srvs
   tf2

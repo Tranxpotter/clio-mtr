@@ -102,6 +102,12 @@ InspectionPlannerNode::InspectionPlannerNode()
         5
     );
 
+    waypoint_viz_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
+        "/inspection_debug/waypoints", 
+        5
+    );
+
+
     // TF Init
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -328,7 +334,7 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         }
         log_waypoint_failed();
     }
-
+    update_visualization();
     
     if (inspection_active){
         pub_next_nav_goal();
@@ -358,6 +364,7 @@ void InspectionPlannerNode::get_new_waypoints_order(){
         msg += std::to_string(id) + " ";
     }
     RCLCPP_INFO(this->get_logger(), "Ordered waypoints: %s", msg.c_str());
+    update_visualization();
     start_inspection();
 }
 
@@ -679,6 +686,65 @@ void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& tar
         << target_pose.position.x << ", " << target_pose.position.y << ", " << target_pose.position.z << ")"
         << " yaw=" << std::setprecision(2) << (target_yaw * 180.0 / M_PI) << "\u00b0"
         << std::endl;
+}
+
+
+
+
+/* Visualization Functions */
+void InspectionPlannerNode::update_visualization(){
+    visualization_msgs::msg::MarkerArray marker_array;
+
+    int marker_id = 0;
+
+    // Helper lambda to create a sphere marker for a single waypoint
+    auto create_marker = [&](uint32_t /*id*/, const geometry_msgs::msg::Pose& pose,
+                             const std::string& ns, int& current_id,
+                             float r, float g, float b)
+    {
+        visualization_msgs::msg::Marker marker;
+        marker.header.frame_id = "map";
+        marker.header.stamp = this->get_clock()->now();
+        marker.ns = ns;
+        marker.id = current_id++;
+        marker.type = visualization_msgs::msg::Marker::SPHERE;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+
+        marker.pose.position.x = pose.position.x;
+        marker.pose.position.y = pose.position.y;
+        marker.pose.position.z = pose.position.z;
+        marker.pose.orientation.w = 1.0;
+
+        marker.scale.x = 0.5;
+        marker.scale.y = 0.5;
+        marker.scale.z = 0.5;
+
+        marker.color.r = r;
+        marker.color.g = g;
+        marker.color.b = b;
+        marker.color.a = 1.0;
+
+        marker.lifetime = rclcpp::Duration(0, 0);  // persistent
+
+        marker_array.markers.push_back(marker);
+    };
+
+    // Unvisited waypoints — blue
+    for (const auto& [id, pose] : unvisited_poses_){
+        create_marker(id, pose, "unvisited", marker_id, 0.0f, 0.0f, 1.0f);
+    }
+
+    // Visited waypoints — green
+    for (const auto& [id, pose] : visited_poses_){
+        create_marker(id, pose, "visited", marker_id, 0.0f, 1.0f, 0.0f);
+    }
+
+    // Failed waypoints — red
+    for (const auto& [id, pose] : failed_poses_){
+        create_marker(id, pose, "failed", marker_id, 1.0f, 0.0f, 0.0f);
+    }
+
+    waypoint_viz_pub_->publish(marker_array);
 }
 
 

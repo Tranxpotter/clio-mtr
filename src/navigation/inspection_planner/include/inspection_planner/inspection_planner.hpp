@@ -18,6 +18,7 @@
 #include <std_srvs/srv/trigger.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 #include "tf2_ros/transform_listener.hpp"
 #include "tf2_ros/buffer.hpp"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
@@ -56,6 +57,7 @@ class InspectionPlannerNode : public rclcpp::Node
 
         // Debug pubs
         rclcpp::Publisher<ViewPose>::SharedPtr next_goal_pub_;
+        rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr waypoint_viz_pub_;
 
         // TODO: Visualizer topics
 
@@ -241,10 +243,21 @@ class InspectionPlannerNode : public rclcpp::Node
         std::string root_dir_ = ROOT_DIR;
         std::ofstream log_file_stream_;
         void logger_init();
-        void log(const std::string& msg);
         void log_displacement(const geometry_msgs::msg::Pose& target_pose);
         void log_waypoint();
         void log_waypoint_failed();
+
+
+
+
+
+        /* Visualization Functions */
+        void update_visualization();
+
+
+
+
+
 
 };
 
