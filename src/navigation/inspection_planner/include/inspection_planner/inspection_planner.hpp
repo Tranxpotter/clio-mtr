@@ -1,6 +1,7 @@
 #ifndef INSPECTION_PLANNER__INSPECTION_PLANNER_HPP_
 #define INSPECTION_PLANNER__INSPECTION_PLANNER_HPP_
 
+#include <iomanip>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -8,12 +9,20 @@
 #include <vector>
 #include <queue>
 #include <cmath>
+#include <iostream>
+#include <fstream>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <geometry_msgs/msg/pose.hpp>
+#include <geometry_msgs/msg/quaternion.hpp>
+#include "tf2_ros/transform_listener.hpp"
+#include "tf2_ros/buffer.hpp"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#include <tf2/utils.h>
+
 #include <inspection_planner_interfaces/msg/tsp_distance_matrix.hpp>
 #include <inspection_planner_interfaces/msg/tsp_distance_entry.hpp>
 #include <inspection_planner_interfaces/msg/waypoints.hpp>
@@ -221,6 +230,22 @@ class InspectionPlannerNode : public rclcpp::Node
         
         
         
+
+
+        /* Logging Functions */
+        // tf2 is only used for logging, for now
+        std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+        std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+
+
+        std::string root_dir_ = ROOT_DIR;
+        std::ofstream log_file_stream_;
+        void logger_init();
+        void log(const std::string& msg);
+        void log_displacement(const geometry_msgs::msg::Pose& target_pose);
+        void log_waypoint();
+        void log_waypoint_failed();
+
 };
 
 

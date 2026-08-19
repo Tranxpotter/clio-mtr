@@ -5,6 +5,8 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -13,6 +15,9 @@ find_package(inspection_planner_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 
 # TSP Solver executable
 add_executable(tsp_solver src/tsp_solver.cpp)
@@ -34,6 +39,9 @@ ament_target_dependencies(inspection_planner
   geometry_msgs
   std_msgs
   std_srvs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
 )
 
 

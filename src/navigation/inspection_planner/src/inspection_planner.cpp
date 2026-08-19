@@ -102,6 +102,11 @@ InspectionPlannerNode::InspectionPlannerNode()
         5
     );
 
+    // TF Init
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
+    logger_init();
 }
 
 
@@ -238,6 +243,8 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
 
     RCLCPP_INFO(this->get_logger(), "Navigating to goal pose with ID: %d", curr_nav_goal_);
 
+    this->log_waypoint();
+
     // TODO Custom header settings, ViewPoseStamped...
     goal.pose.header.stamp = this->get_clock()->now();
     goal.pose.header.frame_id = "map";
@@ -284,6 +291,7 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
     auto node = unvisited_poses_.extract(goal_id);
 
     nav_goal_handle_ = nullptr;
+    this->log_displacement(node.mapped());
 
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED){
         if (!node){
@@ -300,6 +308,7 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         } else {
             this->failed_poses_.insert(std::move(node));
         }
+        log_waypoint_failed();
     }
     else if (result.code == rclcpp_action::ResultCode::CANCELED){
         RCLCPP_INFO(this->get_logger(), "Goal was canceled! ID: %d", goal_id);
@@ -308,6 +317,7 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         } else {
             this->failed_poses_.insert(std::move(node));
         }
+        log_waypoint_failed();
     }
     else{
         RCLCPP_ERROR(this->get_logger(), "Unknown result code. ID: %d", goal_id);
@@ -316,7 +326,10 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         } else {
             this->failed_poses_.insert(std::move(node));
         }
+        log_waypoint_failed();
     }
+
+    
     if (inspection_active){
         pub_next_nav_goal();
     }
@@ -564,6 +577,108 @@ void InspectionPlannerNode::merge_poses_maps(
     for (const auto& [id, pose] : new_map) {
         map[id] = pose;
     }
+}
+
+
+
+
+
+
+std::string get_datetime_string() {
+    // Get current time
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    
+    // Convert to local time structure
+    std::tm local_tm = *std::localtime(&now_time);
+    
+    // Stream into string using format specifiers
+    std::stringstream ss;
+    ss << std::put_time(&local_tm, "%Y-%m-%dT%H_%M_%S");
+    return ss.str();
+}
+
+/* Logging Functions */
+void InspectionPlannerNode::logger_init(){
+    std::string datetime = get_datetime_string();
+    std::string log_file_path = root_dir_ + "logs/" + datetime + ".log";
+    log_file_stream_.open(log_file_path);
+    RCLCPP_INFO(this->get_logger(), "Saving logs to %s", log_file_path.c_str());
+}
+
+
+
+void InspectionPlannerNode::log_waypoint(){
+    if (!log_file_stream_.is_open()){
+        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
+        return;
+    }
+    log_file_stream_ << "Navigating to waypoint: " << this->curr_nav_goal_ << std::endl;
+}
+
+void InspectionPlannerNode::log_waypoint_failed(){
+    if (!log_file_stream_.is_open()){
+        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
+        return;
+    }
+    log_file_stream_ << "Failed to navigate to waypoint: " << this->curr_nav_goal_ << std::endl;
+}
+
+void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& target_pose){
+    // 1. Get current robot pose from TF
+    geometry_msgs::msg::Pose current_pose;
+    try{
+        auto transform = tf_buffer_->lookupTransform("map", "robot_footprint", tf2::TimePointZero);
+        current_pose.position.x = transform.transform.translation.x;
+        current_pose.position.y = transform.transform.translation.y;
+        current_pose.position.z = transform.transform.translation.z;
+        current_pose.orientation = transform.transform.rotation;
+    } catch (const tf2::TransformException &ex) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to get tf transform from map to robot_footprint: %s", ex.what());
+        return;
+    }
+
+    // 3. Translation displacement
+    double dx = current_pose.position.x - target_pose.position.x;
+    double dy = current_pose.position.y - target_pose.position.y;
+    double dz = current_pose.position.z - target_pose.position.z;
+    double euc_dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+
+    // 4. Angular (yaw) displacement normalized to [-pi, pi]
+    auto get_yaw = [](const geometry_msgs::msg::Quaternion& q) -> double {
+        double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
+        double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
+        return std::atan2(siny_cosp, cosy_cosp);
+    };
+    double current_yaw = get_yaw(current_pose.orientation);
+    double target_yaw  = get_yaw(target_pose.orientation);
+    double raw_yaw_diff = current_yaw - target_yaw;
+    double yaw_diff = std::atan2(std::sin(raw_yaw_diff), std::cos(raw_yaw_diff));
+
+    // 5. Write to log file
+    if (!log_file_stream_.is_open()) {
+        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
+        return;
+    }
+
+    // Displacement summary line
+    log_file_stream_
+        << "Viewpose ID: " << curr_nav_goal_
+        << " | Translation: " << std::fixed << std::setprecision(3)
+        << "dx=" << dx << "m dy=" << dy << "m dz=" << dz << "m euclidean=" << euc_dist << "m"
+        << " | Angular: " << std::setprecision(2) << std::abs(yaw_diff * 180.0 / M_PI) << "\u00b0 ("
+        << std::setprecision(4) << yaw_diff << " rad)"
+        << std::endl;
+
+    // Current and target pose line
+    log_file_stream_
+        << "  Current: (" << std::setprecision(3)
+        << current_pose.position.x << ", " << current_pose.position.y << ", " << current_pose.position.z << ")"
+        << " yaw=" << std::setprecision(2) << (current_yaw * 180.0 / M_PI) << "\u00b0"
+        << " | Target: (" << std::setprecision(3)
+        << target_pose.position.x << ", " << target_pose.position.y << ", " << target_pose.position.z << ")"
+        << " yaw=" << std::setprecision(2) << (target_yaw * 180.0 / M_PI) << "\u00b0"
+        << std::endl;
 }
 
 

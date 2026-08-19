@@ -16,3 +16,4 @@ rosbags
 *.db
 *.log
 data/
+!logs/
