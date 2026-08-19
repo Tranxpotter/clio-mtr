@@ -60,6 +60,7 @@ class InspectionPlannerNode : public rclcpp::Node
         // Other params
         double pose_merge_distance_tolerance_;
         double pose_merge_angular_tolerance_;
+        bool use_tsp_;
 
 
         /* Subscriber and Server Callbacks */
@@ -107,11 +108,12 @@ class InspectionPlannerNode : public rclcpp::Node
         /* Attributes */
         std::unordered_map<uint32_t, geometry_msgs::msg::Pose> unvisited_poses_;
         std::unordered_map<uint32_t, geometry_msgs::msg::Pose> visited_poses_;
+        std::unordered_map<uint32_t, geometry_msgs::msg::Pose> failed_poses_;
         std::vector<uint32_t> tsp_result_;
         std::vector<uint32_t> failed_ids_;
 
         bool waiting_new_tsp_result_ = false;
-        int curr_nav_tsp_index_ = 0;
+        size_t curr_nav_tsp_index_ = 0;
         
 
 
@@ -123,7 +125,7 @@ class InspectionPlannerNode : public rclcpp::Node
 
         void start_inspection();
 
-        void pause_inspection();
+        void cancel_current_goal();
 
         /**
          * @brief 
@@ -142,6 +144,8 @@ class InspectionPlannerNode : public rclcpp::Node
 
 
         /* Helper funcs */
+
+        void get_new_waypoints_order();
         
         /**
          * @brief Merge inspection poses that are similar to each other

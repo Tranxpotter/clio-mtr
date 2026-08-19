@@ -41,6 +41,10 @@ InspectionPlannerNode::InspectionPlannerNode()
     pose_merge_angular_tolerance_desc.description = "Angular tolerance in radians. Poses within tolerance will be considered as the same. Both dist and angular tolerance must be passed.";
     this->declare_parameter<double>("pose_merge_angular_tolerance", 0.349066, pose_merge_angular_tolerance_desc);
 
+    auto use_tsp_desc = rcl_interfaces::msg::ParameterDescriptor();
+    use_tsp_desc.description = "Whether to use TSP for ordering waypoints or not. If not, navigate by waypoint ids ascending.";
+    this->declare_parameter<bool>("use_tsp", true, use_tsp_desc);
+
     // Get parameters
     inspection_poses_sub_topic_ = this->get_parameter("inspection_poses_topic").as_string();
     nav_action_server_name_ = this->get_parameter("nav_action_server_name").as_string();
@@ -51,7 +55,7 @@ InspectionPlannerNode::InspectionPlannerNode()
 
     pose_merge_distance_tolerance_ = this->get_parameter("pose_merge_distance_tolerance").as_double();
     pose_merge_angular_tolerance_ = this->get_parameter("pose_merge_angular_tolerance").as_double();
-
+    use_tsp_ = this->get_parameter("use_tsp").as_bool();
 
 
 
@@ -116,16 +120,13 @@ void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr
     
     merge_poses_maps(unvisited_poses_, new_pose_map);
     
-    Waypoints waypoints_msg;
-    build_waypoints_msg(unvisited_poses_, waypoints_msg);
-    tsp_waypoints_pub_->publish(waypoints_msg);
-    waiting_new_tsp_result_ = true;
+    get_new_waypoints_order();
 }
 
 void InspectionPlannerNode::distance_matrix_callback(const TspDistanceMatrix::SharedPtr msg){
     RCLCPP_DEBUG(this->get_logger(), "Received new distance matrix. Pausing robot navigation. Requesting TSP Solver.");
 
-    pause_inspection();
+    cancel_current_goal();
 
     auto request = std::make_shared<SolveTsp::Request>();
     request->matrix = *msg;
@@ -154,10 +155,7 @@ void InspectionPlannerNode::planner_status_callback(const std_msgs::msg::Bool::S
     RCLCPP_INFO(this->get_logger(), "Planner status: %d", planner_found_path_);
     if (msg->data) return;
 
-    Waypoints waypoints_msg;
-    build_waypoints_msg(unvisited_poses_, waypoints_msg);
-    tsp_waypoints_pub_->publish(waypoints_msg);
-    waiting_new_tsp_result_ = true;
+    cancel_current_goal();
 }
 
 
@@ -165,11 +163,13 @@ void InspectionPlannerNode::planner_status_callback(const std_msgs::msg::Bool::S
 void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request::SharedPtr request, std_srvs::srv::Trigger::Response::SharedPtr response){
     (void) request;
     (void) response;
+    RCLCPP_INFO(this->get_logger(), "Resetting inspection...");
+    inspection_active = false;
     unvisited_poses_.clear();
     visited_poses_.clear();
     tsp_result_.clear();
     failed_ids_.clear();
-    pause_inspection();
+    cancel_current_goal();
 }
 
 
@@ -184,8 +184,7 @@ void InspectionPlannerNode::start_inspection(){
 }
 
 
-void InspectionPlannerNode::pause_inspection(){
-    inspection_active = false;
+void InspectionPlannerNode::cancel_current_goal(){
     if (nav_goal_handle_){
         auto status = nav_goal_handle_->get_status();
         if (status == rclcpp_action::GoalStatus::STATUS_ACCEPTED || 
@@ -194,8 +193,7 @@ void InspectionPlannerNode::pause_inspection(){
             RCLCPP_INFO(this->get_logger(), "Cancelling navigation goal pose...");
             nav_action_client_->async_cancel_goal(nav_goal_handle_);
         }
-        nav_goal_handle_ = nullptr;
-    }   
+    }
 }
 
 
@@ -206,6 +204,7 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
         if (curr_nav_tsp_index_ >= tsp_result_.size()){
             // No more tsp results
             if (unvisited_poses_.size() == 0){
+                inspection_active = false;
                 RCLCPP_INFO(this->get_logger(), "All Inspection Waypoints Visited.");
                 ViewPose placeholder;
                 next_goal_pub_->publish(placeholder);
@@ -298,22 +297,55 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         RCLCPP_ERROR(this->get_logger(), "Goal was aborted! ID: %d", goal_id);
         if (!node){
             RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
+        } else {
+            this->failed_poses_.insert(std::move(node));
         }
     }
     else if (result.code == rclcpp_action::ResultCode::CANCELED){
         RCLCPP_INFO(this->get_logger(), "Goal was canceled! ID: %d", goal_id);
         if (!node){
             RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
+        } else {
+            this->failed_poses_.insert(std::move(node));
         }
     }
     else{
         RCLCPP_ERROR(this->get_logger(), "Unknown result code. ID: %d", goal_id);
         if (!node){
             RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
+        } else {
+            this->failed_poses_.insert(std::move(node));
         }
     }
+    if (inspection_active){
+        pub_next_nav_goal();
+    }
+}
 
-    pub_next_nav_goal();
+
+void InspectionPlannerNode::get_new_waypoints_order(){
+    if (use_tsp_){
+        Waypoints waypoints_msg;
+        build_waypoints_msg(unvisited_poses_, waypoints_msg);
+        tsp_waypoints_pub_->publish(waypoints_msg);
+        waiting_new_tsp_result_ = true;
+        return;
+    }
+
+    // No TSP, order unvisited waypoints by waypoint ids
+    for (auto [id, pose] : unvisited_poses_){
+        this->tsp_result_.push_back(id);
+    }
+    std::sort(this->tsp_result_.begin(), this->tsp_result_.end());
+    RCLCPP_INFO(this->get_logger(), "Not using TSP solver, number of unvisited viewposes: %zu", this->tsp_result_.size());
+
+    // Build ordered waypoint message
+    std::string msg;
+    for (auto id : this->tsp_result_){
+        msg += std::to_string(id) + " ";
+    }
+    RCLCPP_INFO(this->get_logger(), "Ordered waypoints: %s", msg.c_str());
+    start_inspection();
 }
 
 

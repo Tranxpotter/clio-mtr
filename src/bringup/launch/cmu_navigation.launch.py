@@ -32,8 +32,8 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     # Set these values
-    default_map_path = "iw_maps/walk_far_transformed.pcd"
-    default_graph_path = "iw_graphs/walk_far.vgh"
+    default_map_path = "iw_maps/2_processed.pcd"
+    default_graph_path = "iw_graphs/2.vgh"
 
 
 

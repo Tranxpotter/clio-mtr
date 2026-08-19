@@ -102,7 +102,8 @@ def generate_launch_description():
             "tsp_waypoints_topic": "/inspection_waypoints",
             "tsp_distance_matrix_topic": "/tsp_distance_matrix",
             "pose_merge_distance_tolerance": 0.3,
-            "pose_merge_angular_tolerance": 0.349066
+            "pose_merge_angular_tolerance": 0.349066, 
+            "use_tsp":False, 
         }]
     )
 
@@ -141,7 +142,7 @@ def generate_launch_description():
     declare_plot, 
     
     nav, 
-    # waypoint_publisher, 
+    waypoint_publisher, 
     tsp_solver, 
     inspection_planner, 
     inspection_poses_loader, 
