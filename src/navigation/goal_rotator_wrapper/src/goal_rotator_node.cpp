@@ -98,6 +98,10 @@ class GoalRotatorNode : public rclcpp::Node
             output_hz_desc.description = "Output cmd_vel hz";
             this->declare_parameter<double>("output_hz", 50.0, output_hz_desc);
 
+            auto min_nav_time_desc = rcl_interfaces::msg::ParameterDescriptor();
+            min_nav_time_desc.description = "Minimum time for the robot to move to the goal before rotating (in seconds)";
+            this->declare_parameter<double>("min_nav_time", 50.0, min_nav_time_desc);
+            
             auto verbose_desc = rcl_interfaces::msg::ParameterDescriptor();
             verbose_desc.description = "Debug use";
             this->declare_parameter<bool>("verbose", false, verbose_desc);
@@ -122,6 +126,7 @@ class GoalRotatorNode : public rclcpp::Node
             this->output_topic_ = this->get_parameter("output_topic").as_string();
             this->output_hz_ = this->get_parameter("output_hz").as_double();
             this->verbose_ = this->get_parameter("verbose").as_bool();
+            this->min_nav_time_ = this->get_parameter("min_nav_time").as_double();
 
             /* Create subscribers and publishers */
             pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(pose_topic_, 1, std::bind(&GoalRotatorNode::on_receive_pose, this, std::placeholders::_1));
@@ -173,6 +178,7 @@ class GoalRotatorNode : public rclcpp::Node
         std::string odom_topic_;
         std::string output_topic_;
         double output_hz_;
+        double min_nav_time_;
         bool verbose_;
 
         // Subscribers and publishers
@@ -200,12 +206,15 @@ class GoalRotatorNode : public rclcpp::Node
         std::mutex goal_handle_mutex_;
 
         geometry_msgs::msg::PoseStamped goal_pose_;
+        rclcpp::Time goal_pose_recv_time_;
         std::shared_ptr<nav_msgs::msg::Odometry> odom_;
         std::string odom_frame = "";
         std::string robot_frame = "";
         geometry_msgs::msg::Twist curr_output_vel_;
         double prev_distance_ = 0.0;
         rclcpp::Time prev_odom_time_;
+
+        
 
         /**
          * @brief Get the goal point from pose object
@@ -243,6 +252,7 @@ class GoalRotatorNode : public rclcpp::Node
             goal_point_pub_->publish(goal_point);
 
             state = NAVIGATING;
+            goal_pose_recv_time_ = this->get_clock()->now();
         }
 
         /**
@@ -318,6 +328,7 @@ class GoalRotatorNode : public rclcpp::Node
 
             goal_point_pub_->publish(goal_point);
             goal_handle->publish_feedback(feedback);
+            goal_pose_recv_time_ = this->get_clock()->now();
         }
 
 
@@ -395,6 +406,14 @@ class GoalRotatorNode : public rclcpp::Node
                 if (verbose_){
                     RCLCPP_INFO(this->get_logger(), "ADJUSTING, distance to goal: %lf", distance);    
                 }
+                rclcpp::Time now = this->get_clock()->now();
+                if ((now - goal_pose_recv_time_) < rclcpp::Duration::from_seconds(this->min_nav_time_)){
+                    if (verbose_){
+                        RCLCPP_INFO(this->get_logger(), "Time from receiving goal pose shorter than threshold...");
+                    }
+                    return;
+                }
+
                 if (distance <= (target_distance_threshold_*target_distance_threshold_)){
                     state = ROTATING;
                     curr_output_vel_ = geometry_msgs::msg::Twist();
@@ -409,7 +428,6 @@ class GoalRotatorNode : public rclcpp::Node
                     return;
                 }
 
-                rclcpp::Time now = this->get_clock()->now();
                 if (prev_distance_ != 0.0){
                     auto time_diff = now - prev_odom_time_;
                     auto distance_change = prev_distance_ - distance;
