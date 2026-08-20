@@ -15,4 +15,5 @@
     odom_topic: "/robot_odom"
     output_topic: "/cmd_vel_out"
     output_hz: 50.0
+    min_nav_time: 5.0
     verbose: false

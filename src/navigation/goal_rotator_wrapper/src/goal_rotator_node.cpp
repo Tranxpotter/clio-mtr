@@ -100,7 +100,7 @@ class GoalRotatorNode : public rclcpp::Node
 
             auto min_nav_time_desc = rcl_interfaces::msg::ParameterDescriptor();
             min_nav_time_desc.description = "Minimum time for the robot to move to the goal before rotating (in seconds)";
-            this->declare_parameter<double>("min_nav_time", 50.0, min_nav_time_desc);
+            this->declare_parameter<double>("min_nav_time", 5.0, min_nav_time_desc);
             
             auto verbose_desc = rcl_interfaces::msg::ParameterDescriptor();
             verbose_desc.description = "Debug use";
