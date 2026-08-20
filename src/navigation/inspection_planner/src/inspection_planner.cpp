@@ -746,7 +746,7 @@ void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& tar
     double dx = current_pose.position.x - target_pose.position.x;
     double dy = current_pose.position.y - target_pose.position.y;
     double dz = current_pose.position.z - target_pose.position.z;
-    double euc_dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+    double euc_dist = std::sqrt(dx*dx + dy*dy);
 
     // 3. Angular (yaw) displacement normalized to [-pi, pi]
     auto get_yaw = [](const geometry_msgs::msg::Quaternion& q) -> double {
