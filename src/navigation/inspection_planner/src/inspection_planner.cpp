@@ -118,7 +118,7 @@ InspectionPlannerNode::InspectionPlannerNode()
 
 
 void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr msg){
-    RCLCPP_INFO(this->get_logger(), "Received new inspection poses. Number of poses: %ld", msg->poses.size());
+    this->log_msg("Received new inspection poses. Number of poses: " + std::to_string(msg->poses.size()));
     std::unordered_map<uint32_t, geometry_msgs::msg::Pose> new_pose_map;
     build_poses_map(msg, new_pose_map);
 
@@ -126,7 +126,7 @@ void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr
 
     filter_repeated_poses(new_pose_map, unvisited_poses_);
     filter_repeated_poses(new_pose_map, visited_poses_);
-    RCLCPP_INFO(this->get_logger(), "Filtered received poses. Number of poses remaining: %ld", new_pose_map.size());
+    this->log_msg("Filtered received poses. Number of poses remaining: " + std::to_string(new_pose_map.size()));
     if (new_pose_map.size() == 0) return;
     
     merge_poses_maps(unvisited_poses_, new_pose_map);
@@ -148,12 +148,12 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
     auto response = future.get();
     if (response->success){
         this->tsp_result_ = response->ordered_waypoint_ids;
-        RCLCPP_INFO(this->get_logger(), "TSP solved. Ordered waypoints: %zu", this->tsp_result_.size());
+        this->log_msg("TSP solved. Ordered waypoints: " + std::to_string(this->tsp_result_.size()));
         if (!response->message.empty()) {
-            RCLCPP_INFO(this->get_logger(), "TSP solver message: %s", response->message.c_str());
+            this->log_msg("TSP solver message: " + response->message);
         }
     } else {
-        RCLCPP_ERROR(this->get_logger(), "TSP solver failed: %s", response->message.c_str());
+        this->log_msg("TSP solver failed: %s" + response->message);
         this->tsp_result_.clear();
     }
     curr_nav_tsp_index_ = 0;
@@ -163,9 +163,11 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
 
 void InspectionPlannerNode::planner_status_callback(const std_msgs::msg::Bool::SharedPtr msg){
     planner_found_path_ = msg->data;
-    RCLCPP_INFO(this->get_logger(), "Planner status: %d", planner_found_path_);
-    if (msg->data) return;
-
+    if (msg->data) {
+        RCLCPP_INFO(this->get_logger(), "Planner status: %d", planner_found_path_);
+        return;
+    }
+    this->log_error_msg("Planner failed to find a path.");
     cancel_current_goal();
 }
 
@@ -174,7 +176,7 @@ void InspectionPlannerNode::planner_status_callback(const std_msgs::msg::Bool::S
 void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request::SharedPtr request, std_srvs::srv::Trigger::Response::SharedPtr response){
     (void) request;
     (void) response;
-    RCLCPP_INFO(this->get_logger(), "Resetting inspection...");
+    this->log_msg("Resetting inspection...");
     inspection_active = false;
     unvisited_poses_.clear();
     visited_poses_.clear();
@@ -216,12 +218,12 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
             // No more tsp results
             if (unvisited_poses_.size() == 0){
                 inspection_active = false;
-                RCLCPP_INFO(this->get_logger(), "All Inspection Waypoints Visited.");
+                this->log_msg("All Inspection Waypoints Visited.");
                 ViewPose placeholder;
                 next_goal_pub_->publish(placeholder);
                 return true; // FIXME: Review this return
             } else {
-                RCLCPP_INFO(this->get_logger(), "No TSP result, fall back to direct waypoint navigation.");
+                this->log_msg("No TSP result, fall back to direct waypoint navigation.");
                 next_pose_id = unvisited_poses_.begin()->first;
             }
             break;
@@ -233,13 +235,13 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
             next_pose_id = next_tsp_id;
             break;
         }
-        RCLCPP_ERROR(this->get_logger(), "Cannot find node in unvisited poses with ID: %d, skipping TSP result", next_tsp_id);
+        this->log_error_msg("Cannot find node in unvisited poses with ID: " + std::to_string(next_tsp_id) + ", skipping TSP result");
     }
 
     if (next_pose_id == -1) return false;
 
     if (!nav_action_client_->action_server_is_ready()) {
-        RCLCPP_ERROR(this->get_logger(), "Navigation action server is not available!");
+        this->log_error_msg("Navigation action server is not available!");
         return false; 
     }
     curr_nav_goal_ = next_pose_id;
@@ -247,9 +249,7 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
     inspection_planner_interfaces::action::NavToPose::Goal goal;
     goal.pose.pose = goal_pose;
 
-    RCLCPP_INFO(this->get_logger(), "Navigating to goal pose with ID: %d", curr_nav_goal_);
-
-    this->log_waypoint();
+    this->log_msg("Navigating to goal pose with ID: " + std::to_string(curr_nav_goal_));
 
     // TODO Custom header settings, ViewPoseStamped...
     goal.pose.header.stamp = this->get_clock()->now();
@@ -276,7 +276,7 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
 
 void InspectionPlannerNode::nav_goal_response_callback(const NavGoalHandle::SharedPtr& goal_handle){
     if (!goal_handle) {
-        RCLCPP_ERROR(this->get_logger(), "Goal was rejected by the action server!");
+        this->log_error_msg("Goal was rejected by the action server!");
         if (inspection_active) pub_next_nav_goal();
         return;
     }
@@ -301,34 +301,34 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
 
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED){
         if (!node){
-            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
+            this->log_error_msg("Navigated to unknown/visited inspection pose. ID: " + std::to_string(goal_id));
         } else {
             visited_poses_.insert(std::move(node));
-            RCLCPP_INFO(this->get_logger(), "Completed navigation to inspection pose. ID: %d", goal_id);
+            this->log_msg("Completed navigation to inspection pose. ID: " + std::to_string(goal_id));
         }
     }
     else if (result.code == rclcpp_action::ResultCode::ABORTED){
-        RCLCPP_ERROR(this->get_logger(), "Goal was aborted! ID: %d", goal_id);
+        this->log_error_msg("Goal was aborted! ID: " + std::to_string(goal_id));
         if (!node){
-            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
+            this->log_error_msg("Navigated to unknown/visited inspection pose. ID: " + std::to_string(goal_id));
         } else {
             this->failed_poses_.insert(std::move(node));
         }
         log_waypoint_failed();
     }
     else if (result.code == rclcpp_action::ResultCode::CANCELED){
-        RCLCPP_INFO(this->get_logger(), "Goal was canceled! ID: %d", goal_id);
+        this->log_msg("Goal was canceled! ID: " + std::to_string(goal_id));
         if (!node){
-            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
+            this->log_error_msg("Navigated to unknown/visited inspection pose. ID: " + std::to_string(goal_id));
         } else {
             this->failed_poses_.insert(std::move(node));
         }
         log_waypoint_failed();
     }
     else{
-        RCLCPP_ERROR(this->get_logger(), "Unknown result code. ID: %d", goal_id);
+        this->log_error_msg("Unknown result code. ID: " + std::to_string(goal_id));
         if (!node){
-            RCLCPP_ERROR(this->get_logger(), "Navigated to unknown/visited inspection pose. ID: %d", goal_id);
+            this->log_error_msg("Navigated to unknown/visited inspection pose. ID: " + std::to_string(goal_id));
         } else {
             this->failed_poses_.insert(std::move(node));
         }
@@ -641,7 +641,7 @@ void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& tar
         current_pose.position.z = transform.transform.translation.z;
         current_pose.orientation = transform.transform.rotation;
     } catch (const tf2::TransformException &ex) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to get tf transform from map to robot_footprint: %s", ex.what());
+        this->log_error_msg("Failed to get tf transform from map to robot_footprint: " + std::string(ex.what()));
         return;
     }
 
@@ -688,6 +688,42 @@ void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& tar
         << std::endl;
 }
 
+std::string InspectionPlannerNode::log_prefix(const std::string& level){
+    auto now = this->get_clock()->now();
+    int64_t ns = now.nanoseconds();
+    int64_t secs = ns / 1'000'000'000;
+    int64_t nsecs = ns % 1'000'000'000;
+    std::ostringstream oss;
+    oss << "[" << secs << "." << std::setfill('0') << std::setw(9) << nsecs << "] [" << level << "] inspection_planner: ";
+    return oss.str();
+}
+
+void InspectionPlannerNode::log_msg(const std::string& msg){
+    RCLCPP_INFO(this->get_logger(), msg.c_str());
+    if (!log_file_stream_.is_open()){
+        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
+        return;
+    }
+    log_file_stream_ << log_prefix("INFO") << msg << std::endl;
+}
+
+void InspectionPlannerNode::log_error_msg(const std::string& msg){
+    RCLCPP_ERROR(this->get_logger(), msg.c_str());
+    if (!log_file_stream_.is_open()){
+        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
+        return;
+    }
+    log_file_stream_ << log_prefix("ERROR") << msg << std::endl;
+}
+
+void InspectionPlannerNode::log_warning_msg(const std::string& msg){
+    RCLCPP_WARN(this->get_logger(), msg.c_str());
+    if (!log_file_stream_.is_open()){
+        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
+        return;
+    }
+    log_file_stream_ << log_prefix("WARN") << msg << std::endl;
+}
 
 
 

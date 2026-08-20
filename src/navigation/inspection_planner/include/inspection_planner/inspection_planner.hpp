@@ -3,6 +3,7 @@
 
 #include <iomanip>
 #include <map>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -243,17 +244,39 @@ class InspectionPlannerNode : public rclcpp::Node
         std::string root_dir_ = ROOT_DIR;
         std::ofstream log_file_stream_;
         void logger_init();
+
+        /**
+         * @brief Get ROS2-style timestamped prefix for log file
+         * Format: [<timestamp>] [<level>] inspection_planner: 
+         */
+        std::string log_prefix(const std::string& level);
+        
+        /**
+         * @brief Log to terminal (INFO) + log file
+         * 
+         * @param msg
+         */
+        void log_msg(const std::string& msg);
+        /**
+         * @brief Log to terminal (ERROR) + log file
+         * 
+         * @param msg
+         */
+        void log_error_msg(const std::string& msg);
+        /**
+         * @brief Log to terminal (WARN) + log file
+         * 
+         * @param msg
+         */
+        void log_warning_msg(const std::string& msg);
+
         void log_displacement(const geometry_msgs::msg::Pose& target_pose);
         void log_waypoint();
         void log_waypoint_failed();
 
 
-
-
-
         /* Visualization Functions */
         void update_visualization();
-
 
 
 
