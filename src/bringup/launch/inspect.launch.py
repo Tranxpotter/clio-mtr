@@ -102,7 +102,7 @@ def generate_launch_description():
         name="inspection_poses_loader", 
         parameters=[{
             "target_frame": "map",
-            "source_frame": "map"
+            "source_frame": "metacam"
         }]
     )
 

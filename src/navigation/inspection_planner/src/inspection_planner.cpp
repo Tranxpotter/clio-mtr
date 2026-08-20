@@ -1,5 +1,16 @@
+#include <csignal>
 #include <inspection_planner/inspection_planner.hpp>
 
+// Global pointer for signal handler
+static InspectionPlannerNode* g_inspection_node = nullptr;
+
+static void shutdown_handler(int) {
+    if (g_inspection_node) {
+        g_inspection_node->write_inspection_summary();
+    }
+    rclcpp::shutdown();
+    exit(0);
+}
 
 InspectionPlannerNode::InspectionPlannerNode()
 : Node("inspection_planner_node")
@@ -113,11 +124,11 @@ InspectionPlannerNode::InspectionPlannerNode()
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
     logger_init();
+    csv_logger_init();
 }
 
-
-
 void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr msg){
+    total_poses_received_ += static_cast<uint32_t>(msg->poses.size());
     this->log_msg("Received new inspection poses. Number of poses: " + std::to_string(msg->poses.size()));
     std::unordered_map<uint32_t, geometry_msgs::msg::Pose> new_pose_map;
     build_poses_map(msg, new_pose_map);
@@ -130,6 +141,7 @@ void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr
     if (new_pose_map.size() == 0) return;
     
     merge_poses_maps(unvisited_poses_, new_pose_map);
+    total_poses_added_ += static_cast<uint32_t>(new_pose_map.size());
     
     get_new_waypoints_order();
 }
@@ -180,8 +192,11 @@ void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request
     inspection_active = false;
     unvisited_poses_.clear();
     visited_poses_.clear();
+    failed_poses_.clear();
     tsp_result_.clear();
     failed_ids_.clear();
+    total_poses_received_ = 0;
+    total_poses_added_ = 0;
     cancel_current_goal();
 }
 
@@ -290,6 +305,21 @@ void InspectionPlannerNode::nav_feedback_callback(
 {
     (void)goal_handle;
     RCLCPP_DEBUG(this->get_logger(), "Received feedback from navigator, code: %d", feedback->state);
+
+    // State constants from goal_rotator_node
+    const int ADJUSTING = 2;
+    const int ROTATING = 3;
+
+    if (curr_nav_goal_ < 0 || unvisited_poses_.find(curr_nav_goal_) == unvisited_poses_.end()) {
+        return;
+    }
+    geometry_msgs::msg::Pose target_pose = unvisited_poses_.at(curr_nav_goal_);
+
+    if (feedback->state == ROTATING) {
+        log_displacement(target_pose, "Unknown", DisplacementPhase::PRE_ROTATION);
+    } else if (feedback->state == ADJUSTING) {
+        log_displacement(target_pose, "Unknown", DisplacementPhase::PRE_ADJUSTMENT);
+    }
 }
 
 void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResult& result, int goal_id){
@@ -297,7 +327,10 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
     auto node = unvisited_poses_.extract(goal_id);
 
     nav_goal_handle_ = nullptr;
-    this->log_displacement(node.mapped());
+    if (node) {
+        std::string nav_result = (result.code == rclcpp_action::ResultCode::SUCCEEDED) ? "Success" : "Failed";
+        this->log_displacement(node.mapped(), nav_result, DisplacementPhase::POST_ROTATION);
+    }
 
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED){
         if (!node){
@@ -613,6 +646,70 @@ void InspectionPlannerNode::logger_init(){
     RCLCPP_INFO(this->get_logger(), "Saving logs to %s", log_file_path.c_str());
 }
 
+void InspectionPlannerNode::csv_logger_init(){
+    std::string datetime = get_datetime_string();
+    std::string analysis_dir = root_dir_ + "analysis/";
+    std::filesystem::create_directories(analysis_dir);
+
+    std::string csv_header = "ViewPose_ID,dx_m,dy_m,dz_m,euclidean_m,yaw_diff_deg,yaw_diff_rad,curr_x,curr_y,curr_z,curr_yaw_deg,target_x,target_y,target_z,target_yaw_deg,Result";
+
+    csv_post_rotation_stream_.open(analysis_dir + datetime + "_post_rotation.csv");
+    csv_post_rotation_stream_ << csv_header << std::endl;
+
+    csv_pre_rotation_stream_.open(analysis_dir + datetime + "_pre_rotation.csv");
+    csv_pre_rotation_stream_ << csv_header << std::endl;
+
+    csv_pre_adjustment_stream_.open(analysis_dir + datetime + "_pre_adjustment.csv");
+    csv_pre_adjustment_stream_ << csv_header << std::endl;
+
+    // Summary log file
+    summary_stream_.open(analysis_dir + datetime + "_summary.log");
+
+    RCLCPP_INFO(this->get_logger(), "Saving CSV analysis to %s", analysis_dir.c_str());
+}
+
+void InspectionPlannerNode::write_inspection_summary(){
+    if (!summary_stream_.is_open()) {
+        RCLCPP_WARN(this->get_logger(), "Summary file is not opened, cannot write summary!");
+        return;
+    }
+
+    uint32_t successful = static_cast<uint32_t>(visited_poses_.size());
+    uint32_t failed = static_cast<uint32_t>(failed_poses_.size());
+    uint32_t unvisited = static_cast<uint32_t>(unvisited_poses_.size());
+    bool complete = (unvisited_poses_.empty());
+
+    double pct_remaining = (total_poses_received_ > 0) ? (static_cast<double>(total_poses_added_) / total_poses_received_ * 100.0) : 0.0;
+    double pct_success = (total_poses_added_ > 0) ? (static_cast<double>(successful) / total_poses_added_ * 100.0) : 0.0;
+    double pct_failed = (total_poses_added_ > 0) ? (static_cast<double>(failed) / total_poses_added_ * 100.0) : 0.0;
+    double pct_unvisited = (total_poses_added_ > 0) ? (static_cast<double>(unvisited) / total_poses_added_ * 100.0) : 0.0;
+
+    summary_stream_ << "========================================" << std::endl;
+    summary_stream_ << "INSPECTION SUMMARY" << std::endl;
+    summary_stream_ << "========================================" << std::endl;
+    summary_stream_ << "Inspection Complete: " << (complete ? "Yes" : "No") << std::endl;
+    summary_stream_ << "Total Waypoints Inputted: " << total_poses_received_ << std::endl;
+    summary_stream_ << "Total Unique (Filtered) Waypoints: " << total_poses_added_ << std::endl;
+    summary_stream_ << std::fixed << std::setprecision(2);
+    summary_stream_ << "Percentage Remaining After Filtering: " << pct_remaining << "%" << std::endl;
+    summary_stream_ << "Success: " << successful << std::endl;
+    summary_stream_ << "Failed: " << failed << std::endl;
+    summary_stream_ << "Not Visited: " << unvisited << std::endl;
+    summary_stream_ << "Success Rate: " << pct_success << "%" << std::endl;
+    summary_stream_ << "Failure Rate: " << pct_failed << "%" << std::endl;
+    summary_stream_ << "Not Visited Rate: " << pct_unvisited << "%" << std::endl;
+    summary_stream_ << "========================================" << std::endl;
+    summary_stream_.flush();
+
+    RCLCPP_INFO(this->get_logger(), "Inspection summary written to analysis folder.");
+
+    // Close all analysis streams
+    if (summary_stream_.is_open()) summary_stream_.close();
+    if (csv_post_rotation_stream_.is_open()) csv_post_rotation_stream_.close();
+    if (csv_pre_rotation_stream_.is_open()) csv_pre_rotation_stream_.close();
+    if (csv_pre_adjustment_stream_.is_open()) csv_pre_adjustment_stream_.close();
+}
+
 
 
 void InspectionPlannerNode::log_waypoint(){
@@ -631,7 +728,7 @@ void InspectionPlannerNode::log_waypoint_failed(){
     log_file_stream_ << "Failed to navigate to waypoint: " << this->curr_nav_goal_ << std::endl;
 }
 
-void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& target_pose){
+void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& target_pose, const std::string& result, DisplacementPhase phase){
     // 1. Get current robot pose from TF
     geometry_msgs::msg::Pose current_pose;
     try{
@@ -645,13 +742,13 @@ void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& tar
         return;
     }
 
-    // 3. Translation displacement
+    // 2. Translation displacement
     double dx = current_pose.position.x - target_pose.position.x;
     double dy = current_pose.position.y - target_pose.position.y;
     double dz = current_pose.position.z - target_pose.position.z;
     double euc_dist = std::sqrt(dx*dx + dy*dy + dz*dz);
 
-    // 4. Angular (yaw) displacement normalized to [-pi, pi]
+    // 3. Angular (yaw) displacement normalized to [-pi, pi]
     auto get_yaw = [](const geometry_msgs::msg::Quaternion& q) -> double {
         double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
         double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
@@ -662,31 +759,58 @@ void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& tar
     double raw_yaw_diff = current_yaw - target_yaw;
     double yaw_diff = std::atan2(std::sin(raw_yaw_diff), std::cos(raw_yaw_diff));
 
-    // 5. Write to log file
-    if (!log_file_stream_.is_open()) {
-        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
-        return;
+    // 4. Determine phase name and target CSV stream
+    std::string phase_name;
+    std::ofstream& csv_stream = (phase == DisplacementPhase::PRE_ROTATION)   ? csv_pre_rotation_stream_
+                                  : (phase == DisplacementPhase::PRE_ADJUSTMENT) ? csv_pre_adjustment_stream_
+                                                                                  : csv_post_rotation_stream_;
+
+    if (phase == DisplacementPhase::PRE_ROTATION)   phase_name = "Pre-Rotation";
+    else if (phase == DisplacementPhase::PRE_ADJUSTMENT) phase_name = "Pre-Adjustment";
+    else phase_name = "Post-Rotation";
+
+    // 5. Write to .log file
+    if (log_file_stream_.is_open()) {
+        log_file_stream_
+            << "Viewpose ID: " << curr_nav_goal_
+            << " | Phase: " << phase_name
+            << " | Translation: " << std::fixed << std::setprecision(3)
+            << "dx=" << dx << "m dy=" << dy << "m dz=" << dz << "m euclidean=" << euc_dist << "m"
+            << " | Angular: " << std::setprecision(2) << std::abs(yaw_diff * 180.0 / M_PI) << "\u00b0 ("
+            << std::setprecision(4) << yaw_diff << " rad)"
+            << std::endl;
+
+        log_file_stream_
+            << "  Current: (" << std::setprecision(3)
+            << current_pose.position.x << ", " << current_pose.position.y << ", " << current_pose.position.z << ")"
+            << " yaw=" << std::setprecision(2) << (current_yaw * 180.0 / M_PI) << "\u00b0"
+            << " | Target: (" << std::setprecision(3)
+            << target_pose.position.x << ", " << target_pose.position.y << ", " << target_pose.position.z << ")"
+            << " yaw=" << std::setprecision(2) << (target_yaw * 180.0 / M_PI) << "\u00b0"
+            << std::endl;
     }
 
-    // Displacement summary line
-    log_file_stream_
-        << "Viewpose ID: " << curr_nav_goal_
-        << " | Translation: " << std::fixed << std::setprecision(3)
-        << "dx=" << dx << "m dy=" << dy << "m dz=" << dz << "m euclidean=" << euc_dist << "m"
-        << " | Angular: " << std::setprecision(2) << std::abs(yaw_diff * 180.0 / M_PI) << "\u00b0 ("
-        << std::setprecision(4) << yaw_diff << " rad)"
-        << std::endl;
+    // 6. Write to CSV file
+    if (csv_stream.is_open()) {
+        csv_stream << std::fixed << std::setprecision(4)
+            << curr_nav_goal_ << ","
+            << dx << "," << dy << "," << dz << "," << euc_dist << ","
+            << (yaw_diff * 180.0 / M_PI) << "," << yaw_diff << ","
+            << current_pose.position.x << "," << current_pose.position.y << "," << current_pose.position.z << ","
+            << (current_yaw * 180.0 / M_PI) << ","
+            << target_pose.position.x << "," << target_pose.position.y << "," << target_pose.position.z << ","
+            << (target_yaw * 180.0 / M_PI) << ","
+            << result << std::endl;
+    }
 
-    // Current and target pose line
-    log_file_stream_
-        << "  Current: (" << std::setprecision(3)
-        << current_pose.position.x << ", " << current_pose.position.y << ", " << current_pose.position.z << ")"
-        << " yaw=" << std::setprecision(2) << (current_yaw * 180.0 / M_PI) << "\u00b0"
-        << " | Target: (" << std::setprecision(3)
-        << target_pose.position.x << ", " << target_pose.position.y << ", " << target_pose.position.z << ")"
-        << " yaw=" << std::setprecision(2) << (target_yaw * 180.0 / M_PI) << "\u00b0"
-        << std::endl;
+    // 7. Log displacement to terminal
+    RCLCPP_INFO(this->get_logger(),
+        "[%s] Viewpose ID: %d | dx=%.3fm dy=%.3fm dz=%.3fm euclidean=%.3fm | yaw_diff=%.2f\u00b0 (%.4f rad) | Result: %s",
+        phase_name.c_str(), curr_nav_goal_, dx, dy, dz, euc_dist,
+        std::abs(yaw_diff * 180.0 / M_PI), yaw_diff, result.c_str());
 }
+
+
 
 std::string InspectionPlannerNode::log_prefix(const std::string& level){
     auto now = this->get_clock()->now();
@@ -836,6 +960,11 @@ void InspectionPlannerNode::update_visualization(){
 int main(int argc, char** argv){
     rclcpp::init(argc, argv);
     auto node = std::make_shared<InspectionPlannerNode>();
+    g_inspection_node = node.get();
+
+    // Register signal handler to write inspection summary on shutdown
+    signal(SIGINT, shutdown_handler);
+
     rclcpp::spin(node);
     if (rclcpp::ok()){
         rclcpp::shutdown();

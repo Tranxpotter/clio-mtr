@@ -399,6 +399,13 @@ class GoalRotatorNode : public rclcpp::Node
                     state = ROTATING;
                     curr_output_vel_ = geometry_msgs::msg::Twist();
                     RCLCPP_INFO(this->get_logger(), "Done ADJUSTING, now ROTATING, distance to goal < threshold.");
+
+                    if (is_pose_from_server){
+                        auto feedback = std::make_shared<inspection_planner_interfaces::action::NavToPose::Feedback>();
+                        feedback->state = ROTATING;
+                        active_goal_handle_->publish_feedback(feedback);
+                    }
+
                     return;
                 }
 
@@ -414,6 +421,12 @@ class GoalRotatorNode : public rclcpp::Node
                         state = ROTATING;
                         curr_output_vel_ = geometry_msgs::msg::Twist();
                         RCLCPP_INFO(this->get_logger(), "Done ADJUSTING, now ROTATING, approach rate < threshold.");
+
+                        if (is_pose_from_server){
+                            auto feedback = std::make_shared<inspection_planner_interfaces::action::NavToPose::Feedback>();
+                            feedback->state = ROTATING;
+                            active_goal_handle_->publish_feedback(feedback);
+                        }
                         return;
                     }
                 }

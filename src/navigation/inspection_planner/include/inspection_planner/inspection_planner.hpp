@@ -1,6 +1,7 @@
 #ifndef INSPECTION_PLANNER__INSPECTION_PLANNER_HPP_
 #define INSPECTION_PLANNER__INSPECTION_PLANNER_HPP_
 
+#include <filesystem>
 #include <iomanip>
 #include <map>
 #include <sstream>
@@ -46,6 +47,7 @@ class InspectionPlannerNode : public rclcpp::Node
 {
     public: 
         InspectionPlannerNode();
+        void write_inspection_summary();
     
     private:
         rclcpp::Subscription<ViewPoses>::SharedPtr inspection_poses_sub_;               // Inspection poses input topic
@@ -243,7 +245,24 @@ class InspectionPlannerNode : public rclcpp::Node
 
         std::string root_dir_ = ROOT_DIR;
         std::ofstream log_file_stream_;
+
+        // CSV streams for navigation accuracy analysis
+        std::ofstream csv_post_rotation_stream_;
+        std::ofstream csv_pre_rotation_stream_;
+        std::ofstream csv_pre_adjustment_stream_;
+
+        // Summary log stream (written to analysis/ folder)
+        std::ofstream summary_stream_;
+
+        // Statistics counters (cumulative across all inspection_poses_callback invocations)
+        uint32_t total_poses_received_ = 0;
+        uint32_t total_poses_added_ = 0;
+
+        // Displacement logging phase
+        enum class DisplacementPhase { PRE_ROTATION, PRE_ADJUSTMENT, POST_ROTATION };
+
         void logger_init();
+        void csv_logger_init();
 
         /**
          * @brief Get ROS2-style timestamped prefix for log file
@@ -270,7 +289,7 @@ class InspectionPlannerNode : public rclcpp::Node
          */
         void log_warning_msg(const std::string& msg);
 
-        void log_displacement(const geometry_msgs::msg::Pose& target_pose);
+        void log_displacement(const geometry_msgs::msg::Pose& target_pose, const std::string& result, DisplacementPhase phase);
         void log_waypoint();
         void log_waypoint_failed();
 
