@@ -17,26 +17,28 @@ def generate_launch_description():
     declare_launch_rviz = DeclareLaunchArgument("rviz", default_value="true")
     launch_rviz = LaunchConfiguration("rviz")
 
+    config_dir = PathJoinSubstitution([
+        FindPackageShare("inspection_planner"),
+        "config"
+    ])
+
+    config_file = PathJoinSubstitution([
+        config_dir,
+        "config.yaml"
+    ])
+
     tsp_solver = Node(
         package="inspection_planner", 
         executable="tsp_solver", 
-        name="tsp_solver"
+        name="tsp_solver",
+        parameters=[config_file]
     )
 
     inspection_planner = Node(
         package="inspection_planner", 
         executable="inspection_planner", 
         name="inspection_planner",
-        parameters=[{
-            "inspection_poses_topic": "/inspection_poses",
-            "nav_action_server_name": "/nav_to_pose",
-            "tsp_solver": "/solve_tsp",
-            "tsp_waypoints_topic": "/inspection_waypoints",
-            "tsp_distance_matrix_topic": "/tsp_distance_matrix",
-            "pose_merge_distance_tolerance": 0.3,
-            "pose_merge_angular_tolerance": 0.349066, 
-            "use_tsp":True, 
-        }]
+        parameters=[config_file]
     )
 
     rviz = Node(
