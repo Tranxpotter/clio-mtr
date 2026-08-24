@@ -41,13 +41,18 @@ def generate_launch_description():
         parameters=[config_file]
     )
 
-    rviz = Node(
-        package="rviz2", 
-        executable="rviz2", 
-        name="inspection_rviz", 
-        output="screen", 
-        arguments=['-d', os.path.join(get_package_share_directory("inspection_planner"), "rviz", "default.rviz")], 
-        condition=IfCondition(launch_rviz)
+    rviz = TimerAction(
+        period=2.0,
+        actions=[
+            Node(
+                package="rviz2", 
+                executable="rviz2", 
+                name="inspection_rviz", 
+                output="screen", 
+                arguments=['-d', os.path.join(get_package_share_directory("inspection_planner"), "rviz", "default.rviz")], 
+                condition=IfCondition(launch_rviz)
+            )
+        ]
     )
 
     return LaunchDescription([
