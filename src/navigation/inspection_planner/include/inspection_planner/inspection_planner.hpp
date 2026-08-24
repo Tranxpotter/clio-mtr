@@ -1,19 +1,31 @@
 #ifndef INSPECTION_PLANNER__INSPECTION_PLANNER_HPP_
 #define INSPECTION_PLANNER__INSPECTION_PLANNER_HPP_
 
+#include <filesystem>
+#include <iomanip>
 #include <map>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <queue>
 #include <cmath>
+#include <iostream>
+#include <fstream>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <geometry_msgs/msg/pose.hpp>
+#include <geometry_msgs/msg/quaternion.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include "tf2_ros/transform_listener.hpp"
+#include "tf2_ros/buffer.hpp"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#include <tf2/utils.h>
+
 #include <inspection_planner_interfaces/msg/tsp_distance_matrix.hpp>
 #include <inspection_planner_interfaces/msg/tsp_distance_entry.hpp>
 #include <inspection_planner_interfaces/msg/waypoints.hpp>
@@ -35,6 +47,7 @@ class InspectionPlannerNode : public rclcpp::Node
 {
     public: 
         InspectionPlannerNode();
+        void write_inspection_summary();
     
     private:
         rclcpp::Subscription<ViewPoses>::SharedPtr inspection_poses_sub_;               // Inspection poses input topic
@@ -47,6 +60,7 @@ class InspectionPlannerNode : public rclcpp::Node
 
         // Debug pubs
         rclcpp::Publisher<ViewPose>::SharedPtr next_goal_pub_;
+        rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr waypoint_viz_pub_;
 
         // TODO: Visualizer topics
 
@@ -62,6 +76,7 @@ class InspectionPlannerNode : public rclcpp::Node
         double pose_merge_angular_tolerance_;
         double redo_tsp_period_;
         int success_count_for_retry_threshold_;
+        bool use_tsp_;
 
 
         /* Subscriber and Server Callbacks */
@@ -120,7 +135,7 @@ class InspectionPlannerNode : public rclcpp::Node
         bool allow_pub_new_waypoint_ = true;
 
         int success_count_for_retry_ = 0;
-        
+        bool retrying_failed_poses_ = false; // No tsp use only
 
 
         /* Navigation Handlers and Callbacks */
@@ -158,6 +173,8 @@ class InspectionPlannerNode : public rclcpp::Node
         void get_new_distance_matrix();
 
         /* Helper funcs */
+
+        void get_new_waypoints_order();
         
         /**
          * @brief Merge inspection poses that are similar to each other
@@ -187,6 +204,9 @@ class InspectionPlannerNode : public rclcpp::Node
             const ViewPoses::SharedPtr msg, 
             std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& map
         );
+
+
+        void move_failed_to_unvisited();
         
         /**
          * @brief Build ViewPoses message from pose map
@@ -233,6 +253,72 @@ class InspectionPlannerNode : public rclcpp::Node
         
         
         
+
+
+        /* Logging Functions */
+        // tf2 is only used for logging, for now
+        std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+        std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+
+
+        std::string root_dir_ = ROOT_DIR;
+        std::ofstream log_file_stream_;
+
+        // CSV streams for navigation accuracy analysis
+        std::ofstream csv_post_rotation_stream_;
+        std::ofstream csv_pre_rotation_stream_;
+        std::ofstream csv_pre_adjustment_stream_;
+
+        // Summary log stream (written to analysis/ folder)
+        std::ofstream summary_stream_;
+
+        // Statistics counters (cumulative across all inspection_poses_callback invocations)
+        uint32_t total_poses_received_ = 0;
+        uint32_t total_poses_added_ = 0;
+
+        // Displacement logging phase
+        enum class DisplacementPhase { PRE_ROTATION, PRE_ADJUSTMENT, POST_ROTATION };
+
+        void logger_init();
+        void csv_logger_init();
+
+        /**
+         * @brief Get ROS2-style timestamped prefix for log file
+         * Format: [<timestamp>] [<level>] inspection_planner: 
+         */
+        std::string log_prefix(const std::string& level);
+        
+        /**
+         * @brief Log to terminal (INFO) + log file
+         * 
+         * @param msg
+         */
+        void log_msg(const std::string& msg);
+        /**
+         * @brief Log to terminal (ERROR) + log file
+         * 
+         * @param msg
+         */
+        void log_error_msg(const std::string& msg);
+        /**
+         * @brief Log to terminal (WARN) + log file
+         * 
+         * @param msg
+         */
+        void log_warning_msg(const std::string& msg);
+
+        void log_displacement(const geometry_msgs::msg::Pose& target_pose, const std::string& result, DisplacementPhase phase);
+        void log_waypoint();
+        void log_waypoint_failed();
+
+
+        /* Visualization Functions */
+        void update_visualization();
+
+
+
+
+
 };
 
 

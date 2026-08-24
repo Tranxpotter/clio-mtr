@@ -71,7 +71,7 @@ class NavAccuracyLogger(Node):
         dx = robot_pos.x - prev_pos.x
         dy = robot_pos.y - prev_pos.y
         dz = robot_pos.z - prev_pos.z
-        euc_dist = math.sqrt(dx**2 + dy**2 + dz**2)
+        euc_dist = math.sqrt(dx**2 + dy**2)
 
         # Extract Yaws (in radians and degrees)
         robot_yaw = quaternion_to_yaw(tf_transform.transform.rotation)
