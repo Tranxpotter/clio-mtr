@@ -147,8 +147,10 @@ class InspectionPlannerNode : public rclcpp::Node
         /**
          * @brief Cancels current navigation goal when called
          * 
+         * @return true `Successfully called cancel`
+         * @return false `Did not call async cancel (no current goal)`
          */
-        void cancel_current_goal();
+        bool cancel_current_goal();
 
         /**
          * @brief 

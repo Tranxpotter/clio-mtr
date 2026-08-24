@@ -248,7 +248,7 @@ void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request
 }
 
 
-void InspectionPlannerNode::cancel_current_goal(){
+bool InspectionPlannerNode::cancel_current_goal(){
     if (nav_goal_handle_){
         auto status = nav_goal_handle_->get_status();
         if (status == rclcpp_action::GoalStatus::STATUS_ACCEPTED || 
@@ -256,8 +256,10 @@ void InspectionPlannerNode::cancel_current_goal(){
         {
             RCLCPP_INFO(this->get_logger(), "Cancelling navigation goal pose...");
             nav_action_client_->async_cancel_goal(nav_goal_handle_);
+            return true;
         }
     }
+    return false;
 }
 
 
@@ -287,6 +289,11 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
         return false; 
     }
     if (curr_nav_goal_ == next_pose_id){
+        return false;
+    }
+    if (cancel_current_goal()){
+        // Has active goal
+        curr_nav_tsp_index_ = 0;
         return false;
     }
     curr_nav_goal_ = next_pose_id;
