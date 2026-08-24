@@ -1,5 +1,6 @@
 tsp_solver:
-  ros__parameters: {}
+  ros__parameters:
+    solver_algorithm: "nearest_neighbor"
 
 inspection_planner:
   ros__parameters:
