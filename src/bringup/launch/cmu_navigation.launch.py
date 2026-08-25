@@ -32,8 +32,8 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     # Set these values
-    default_map_path = "iw_maps/2_processed.pcd"
-    default_graph_path = "iw_graphs/2.vgh"
+    default_map_path = "data/centen_test/centen_transformed.pcd"
+    default_graph_path = "data/centen_test/centen.vgh"
 
 
 
@@ -50,6 +50,10 @@ def generate_launch_description():
     ]
     auto_read_graph_command = [
         "ros2", "topic", "pub", "-1", "/read_file_dir", "std_msgs/String", f'{{"data": "{default_graph_path}"}}'
+    ]
+
+    off_attemptable_planning_command = [
+        "ros2", "topic", "pub", "-1", "/planning_attemptable", "std_msgs/msg/Bool", "data: True"
     ]
 
 
@@ -365,11 +369,21 @@ def generate_launch_description():
         name="debug_rosbag_recorder"
     )
 
-    auto_relocalize = TimerAction(
-        period=7.0, 
+    auto_relocalize = GroupAction(
         actions=[
-            ExecuteProcess(cmd=auto_relocalize_command), 
-            ExecuteProcess(cmd=auto_read_graph_command)
+            TimerAction(
+                period=7.0, 
+                actions=[
+                    ExecuteProcess(cmd=auto_relocalize_command)
+                ]
+            ), 
+            TimerAction(
+                period=10.0, 
+                actions=[
+                    ExecuteProcess(cmd=auto_read_graph_command), 
+                    ExecuteProcess(cmd=off_attemptable_planning_command)
+                ]
+            )
         ]
     )
 
