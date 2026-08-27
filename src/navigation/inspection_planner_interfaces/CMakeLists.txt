@@ -22,9 +22,12 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Waypoints.msg"
   "msg/TspDistanceEntry.msg"
   "msg/TspDistanceMatrix.msg"
+  "msg/LogMsg.msg"
+  "msg/ViewPosesDebug.msg"
   "srv/LoadInspectionPoses.srv"
   "srv/PublishWaypointsFromYaml.srv"
   "srv/SolveTsp.srv"
+  "srv/LogDisplacement.srv"
   "action/NavToPose.action"
   DEPENDENCIES geometry_msgs std_msgs
 )

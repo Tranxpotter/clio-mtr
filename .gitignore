@@ -4,7 +4,6 @@ log
 __pycache__
 iw_maps/
 iw_2d_maps/
-log*
 *.pdf
 *.gv
 rosbags

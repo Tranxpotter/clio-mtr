@@ -1,16 +1,4 @@
-#include <csignal>
 #include <inspection_planner/inspection_planner.hpp>
-
-// Global pointer for signal handler
-static InspectionPlannerNode* g_inspection_node = nullptr;
-
-static void shutdown_handler(int) {
-    if (g_inspection_node) {
-        g_inspection_node->write_inspection_summary();
-    }
-    rclcpp::shutdown();
-    exit(0);
-}
 
 InspectionPlannerNode::InspectionPlannerNode()
 : Node("inspection_planner_node")
@@ -118,23 +106,34 @@ InspectionPlannerNode::InspectionPlannerNode()
 
 
     // Debug topics
-    next_goal_pub_ = this->create_publisher<ViewPose>(
-        "/inspection_debug/next_goal", 
+    msg_pub_ = this->create_publisher<std_msgs::msg::String>(
+        "/inspection_log/msg", 
+        10
+    );
+
+    log_msg_pub_ = this->create_publisher<inspection_planner_interfaces::msg::LogMsg>(
+        "/inspection_log/log_msg", 
+        10
+    ); 
+
+    viewposes_debug_pub_ = this->create_publisher<inspection_planner_interfaces::msg::ViewPosesDebug>(
+        "/inspection_log/poses_debug", 
+        5
+    ); 
+
+    num_poses_received_pub_ = this->create_publisher<std_msgs::msg::UInt32>(
+        "/inspection_log/num_poses_received", 
+        5
+    ), 
+
+    num_poses_added_pub_ = this->create_publisher<std_msgs::msg::UInt32>(
+        "/inspection_log/num_poses_added", 
         5
     );
 
-    waypoint_viz_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-        "/inspection_debug/waypoints", 
-        5
+    log_displacement_client_ = this->create_client<inspection_planner_interfaces::srv::LogDisplacement>(
+        "/inspection_log/log_displacement"
     );
-
-
-    // TF Init
-    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-
-    logger_init();
-    csv_logger_init();
 }
 
 
@@ -142,7 +141,10 @@ InspectionPlannerNode::InspectionPlannerNode()
 
 
 void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr msg){
-    total_poses_received_ += static_cast<uint32_t>(msg->poses.size());
+    std_msgs::msg::UInt32 num_poses_received_msg;
+    num_poses_received_msg.data = static_cast<uint32_t>(msg->poses.size());
+    this->num_poses_received_pub_->publish(num_poses_received_msg);
+
     this->log_msg("Received new inspection poses. Number of poses: " + std::to_string(msg->poses.size()));
     std::unordered_map<uint32_t, geometry_msgs::msg::Pose> new_pose_map;
     build_poses_map(msg, new_pose_map);
@@ -155,7 +157,10 @@ void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr
     if (new_pose_map.size() == 0) return;
     
     merge_poses_maps(unvisited_poses_, new_pose_map);
-    total_poses_added_ += static_cast<uint32_t>(new_pose_map.size());
+
+    std_msgs::msg::UInt32 num_poses_added_msg;
+    num_poses_added_msg.data = static_cast<uint32_t>(new_pose_map.size());
+    this->num_poses_added_pub_->publish(num_poses_added_msg);
 
     this->retrying_failed_poses_ = false; //TODO: Add inspection initailization method
     
@@ -208,6 +213,8 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
         RCLCPP_INFO(this->get_logger(), "The following waypoints failed: %s", failed_poses_log.c_str());
     }
 
+    update_visualization();
+
     if (tsp_result_.empty()){
         inspection_active = false;
         cancel_current_goal();
@@ -242,8 +249,7 @@ void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request
     visited_poses_.clear();
     failed_poses_.clear();
     tsp_result_.clear();
-    total_poses_received_ = 0;
-    total_poses_added_ = 0;
+
     cancel_current_goal();
 }
 
@@ -307,12 +313,6 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
     goal.pose.header.stamp = this->get_clock()->now();
     goal.pose.header.frame_id = "map";
 
-    // Debug pose
-    ViewPose debug_pose;
-    debug_pose.pose = goal.pose.pose;
-    debug_pose.id = next_pose_id;
-    next_goal_pub_->publish(debug_pose);
-
     auto send_goal_options = rclcpp_action::Client<NavToPose>::SendGoalOptions();
         send_goal_options.goal_response_callback =
         std::bind(&InspectionPlannerNode::nav_goal_response_callback, this, std::placeholders::_1);
@@ -373,12 +373,15 @@ void InspectionPlannerNode::nav_feedback_callback(
     if (curr_nav_goal_ < 0 || unvisited_poses_.find(curr_nav_goal_) == unvisited_poses_.end()) {
         return;
     }
-    geometry_msgs::msg::Pose target_pose = unvisited_poses_.at(curr_nav_goal_);
+    
+    ViewPose target_pose;
+    target_pose.pose = unvisited_poses_.at(curr_nav_goal_);
+    target_pose.id = curr_nav_goal_;
 
     if (feedback->state == ROTATING) {
-        log_displacement(target_pose, "Unknown", DisplacementPhase::PRE_ROTATION);
+        log_displacement(target_pose, "Unknown", 1);
     } else if (feedback->state == ADJUSTING) {
-        log_displacement(target_pose, "Unknown", DisplacementPhase::PRE_ADJUSTMENT);
+        log_displacement(target_pose, "Unknown", 0);
     }
 }
 
@@ -389,7 +392,10 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
     nav_goal_handle_ = nullptr;
     if (node) {
         std::string nav_result = (result.code == rclcpp_action::ResultCode::SUCCEEDED) ? "Success" : "Failed";
-        this->log_displacement(node.mapped(), nav_result, DisplacementPhase::POST_ROTATION);
+        ViewPose target_pose;
+        target_pose.pose = node.mapped();
+        target_pose.id = goal_id;
+        this->log_displacement(target_pose, nav_result, 2);
     }
 
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED){
@@ -408,7 +414,6 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         } else {
             this->failed_poses_.insert(std::move(node));
         }
-        log_waypoint_failed();
     }
     else if (result.code == rclcpp_action::ResultCode::CANCELED){
         this->log_msg("Goal was canceled! ID: " + std::to_string(goal_id));
@@ -417,7 +422,6 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         } else {
             this->failed_poses_.insert(std::move(node));
         }
-        log_waypoint_failed();
     }
     else{
         this->log_error_msg("Unknown result code. ID: " + std::to_string(goal_id));
@@ -426,7 +430,6 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
         } else {
             this->failed_poses_.insert(std::move(node));
         }
-        log_waypoint_failed();
     }
     update_visualization();
     
@@ -498,19 +501,6 @@ void InspectionPlannerNode::get_new_distance_matrix(){
     waiting_new_tsp_result_ = true;
     return;
 }
-
-// My version, idk if the code is actually valid
-// void InspectionPlannerNode::merge_similar_poses(std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& new_poses){
-//     for (auto it = new_poses.begin(); it != new_poses.end();){
-//         auto pose = it->second;
-//         for (auto it2 = it; it2 != new_poses.end();){
-//             auto pose2 = it2->second;
-//             if (is_same_pose(pose, pose2)){
-//                 it2 = new_poses.erase(it2);
-//             }
-//         }
-//     }
-// }
 
 
 
@@ -727,350 +717,54 @@ void InspectionPlannerNode::merge_poses_maps(
 }
 
 
-
-
-
-
-std::string get_datetime_string() {
-    // Get current time
-    auto now = std::chrono::system_clock::now();
-    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-    
-    // Convert to local time structure
-    std::tm local_tm = *std::localtime(&now_time);
-    
-    // Stream into string using format specifiers
-    std::stringstream ss;
-    ss << std::put_time(&local_tm, "%Y-%m-%dT%H_%M_%S");
-    return ss.str();
-}
-
-/* Logging Functions */
-void InspectionPlannerNode::logger_init(){
-    std::string datetime = get_datetime_string();
-    std::string log_file_path = root_dir_ + "logs/" + datetime + ".log";
-    log_file_stream_.open(log_file_path);
-    RCLCPP_INFO(this->get_logger(), "Saving logs to %s", log_file_path.c_str());
-}
-
-void InspectionPlannerNode::csv_logger_init(){
-    std::string datetime = get_datetime_string();
-    std::string analysis_dir = root_dir_ + "analysis/";
-    std::filesystem::create_directories(analysis_dir);
-
-    std::string csv_header = "ViewPose_ID,dx_m,dy_m,dz_m,euclidean_m,yaw_diff_deg,yaw_diff_rad,curr_x,curr_y,curr_z,curr_yaw_deg,target_x,target_y,target_z,target_yaw_deg,Result";
-
-    csv_post_rotation_stream_.open(analysis_dir + datetime + "_post_rotation.csv");
-    csv_post_rotation_stream_ << csv_header << std::endl;
-
-    csv_pre_rotation_stream_.open(analysis_dir + datetime + "_pre_rotation.csv");
-    csv_pre_rotation_stream_ << csv_header << std::endl;
-
-    csv_pre_adjustment_stream_.open(analysis_dir + datetime + "_pre_adjustment.csv");
-    csv_pre_adjustment_stream_ << csv_header << std::endl;
-
-    // Summary log file
-    summary_stream_.open(analysis_dir + datetime + "_summary.log");
-
-    RCLCPP_INFO(this->get_logger(), "Saving CSV analysis to %s", analysis_dir.c_str());
-}
-
-void InspectionPlannerNode::write_inspection_summary(){
-    if (!summary_stream_.is_open()) {
-        RCLCPP_WARN(this->get_logger(), "Summary file is not opened, cannot write summary!");
-        return;
-    }
-
-    uint32_t successful = static_cast<uint32_t>(visited_poses_.size());
-    uint32_t failed = static_cast<uint32_t>(failed_poses_.size());
-    uint32_t unvisited = static_cast<uint32_t>(unvisited_poses_.size());
-    bool complete = (unvisited_poses_.empty());
-
-    double pct_remaining = (total_poses_received_ > 0) ? (static_cast<double>(total_poses_added_) / total_poses_received_ * 100.0) : 0.0;
-    double pct_success = (total_poses_added_ > 0) ? (static_cast<double>(successful) / total_poses_added_ * 100.0) : 0.0;
-    double pct_failed = (total_poses_added_ > 0) ? (static_cast<double>(failed) / total_poses_added_ * 100.0) : 0.0;
-    double pct_unvisited = (total_poses_added_ > 0) ? (static_cast<double>(unvisited) / total_poses_added_ * 100.0) : 0.0;
-
-    summary_stream_ << "========================================" << std::endl;
-    summary_stream_ << "INSPECTION SUMMARY" << std::endl;
-    summary_stream_ << "========================================" << std::endl;
-    summary_stream_ << "Inspection Complete: " << (complete ? "Yes" : "No") << std::endl;
-    summary_stream_ << "Total Waypoints Inputted: " << total_poses_received_ << std::endl;
-    summary_stream_ << "Total Unique (Filtered) Waypoints: " << total_poses_added_ << std::endl;
-    summary_stream_ << std::fixed << std::setprecision(2);
-    summary_stream_ << "Percentage Remaining After Filtering: " << pct_remaining << "%" << std::endl;
-    summary_stream_ << "Success: " << successful << std::endl;
-    summary_stream_ << "Failed: " << failed << std::endl;
-    summary_stream_ << "Not Visited: " << unvisited << std::endl;
-    summary_stream_ << "Success Rate: " << pct_success << "%" << std::endl;
-    summary_stream_ << "Failure Rate: " << pct_failed << "%" << std::endl;
-    summary_stream_ << "Not Visited Rate: " << pct_unvisited << "%" << std::endl;
-    summary_stream_ << "========================================" << std::endl;
-    summary_stream_.flush();
-
-    RCLCPP_INFO(this->get_logger(), "Inspection summary written to analysis folder.");
-
-    // Close all analysis streams
-    if (summary_stream_.is_open()) summary_stream_.close();
-    if (csv_post_rotation_stream_.is_open()) csv_post_rotation_stream_.close();
-    if (csv_pre_rotation_stream_.is_open()) csv_pre_rotation_stream_.close();
-    if (csv_pre_adjustment_stream_.is_open()) csv_pre_adjustment_stream_.close();
-}
-
-
-
-void InspectionPlannerNode::log_waypoint(){
-    if (!log_file_stream_.is_open()){
-        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
-        return;
-    }
-    log_file_stream_ << "Navigating to waypoint: " << this->curr_nav_goal_ << std::endl;
-}
-
-void InspectionPlannerNode::log_waypoint_failed(){
-    if (!log_file_stream_.is_open()){
-        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
-        return;
-    }
-    log_file_stream_ << "Failed to navigate to waypoint: " << this->curr_nav_goal_ << std::endl;
-}
-
-void InspectionPlannerNode::log_displacement(const geometry_msgs::msg::Pose& target_pose, const std::string& result, DisplacementPhase phase){
-    // 1. Get current robot pose from TF
-    geometry_msgs::msg::Pose current_pose;
-    try{
-        auto transform = tf_buffer_->lookupTransform("map", "robot_footprint", tf2::TimePointZero);
-        current_pose.position.x = transform.transform.translation.x;
-        current_pose.position.y = transform.transform.translation.y;
-        current_pose.position.z = transform.transform.translation.z;
-        current_pose.orientation = transform.transform.rotation;
-    } catch (const tf2::TransformException &ex) {
-        this->log_error_msg("Failed to get tf transform from map to robot_footprint: " + std::string(ex.what()));
-        return;
-    }
-
-    // 2. Translation displacement
-    double dx = current_pose.position.x - target_pose.position.x;
-    double dy = current_pose.position.y - target_pose.position.y;
-    double dz = current_pose.position.z - target_pose.position.z;
-    double euc_dist = std::sqrt(dx*dx + dy*dy);
-
-    // 3. Angular (yaw) displacement normalized to [-pi, pi]
-    auto get_yaw = [](const geometry_msgs::msg::Quaternion& q) -> double {
-        double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
-        double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
-        return std::atan2(siny_cosp, cosy_cosp);
-    };
-    double current_yaw = get_yaw(current_pose.orientation);
-    double target_yaw  = get_yaw(target_pose.orientation);
-    double raw_yaw_diff = current_yaw - target_yaw;
-    double yaw_diff = std::atan2(std::sin(raw_yaw_diff), std::cos(raw_yaw_diff));
-
-    // 4. Determine phase name and target CSV stream
-    std::string phase_name;
-    std::ofstream& csv_stream = (phase == DisplacementPhase::PRE_ROTATION)   ? csv_pre_rotation_stream_
-                                  : (phase == DisplacementPhase::PRE_ADJUSTMENT) ? csv_pre_adjustment_stream_
-                                                                                  : csv_post_rotation_stream_;
-
-    if (phase == DisplacementPhase::PRE_ROTATION)   phase_name = "Pre-Rotation";
-    else if (phase == DisplacementPhase::PRE_ADJUSTMENT) phase_name = "Pre-Adjustment";
-    else phase_name = "Post-Rotation";
-
-    // 5. Write to .log file
-    if (log_file_stream_.is_open()) {
-        log_file_stream_
-            << "Viewpose ID: " << curr_nav_goal_
-            << " | Phase: " << phase_name
-            << " | Translation: " << std::fixed << std::setprecision(3)
-            << "dx=" << dx << "m dy=" << dy << "m dz=" << dz << "m euclidean=" << euc_dist << "m"
-            << " | Angular: " << std::setprecision(2) << std::abs(yaw_diff * 180.0 / M_PI) << "\u00b0 ("
-            << std::setprecision(4) << yaw_diff << " rad)"
-            << std::endl;
-
-        log_file_stream_
-            << "  Current: (" << std::setprecision(3)
-            << current_pose.position.x << ", " << current_pose.position.y << ", " << current_pose.position.z << ")"
-            << " yaw=" << std::setprecision(2) << (current_yaw * 180.0 / M_PI) << "\u00b0"
-            << " | Target: (" << std::setprecision(3)
-            << target_pose.position.x << ", " << target_pose.position.y << ", " << target_pose.position.z << ")"
-            << " yaw=" << std::setprecision(2) << (target_yaw * 180.0 / M_PI) << "\u00b0"
-            << std::endl;
-    }
-
-    // 6. Write to CSV file
-    if (csv_stream.is_open()) {
-        csv_stream << std::fixed << std::setprecision(4)
-            << curr_nav_goal_ << ","
-            << dx << "," << dy << "," << dz << "," << euc_dist << ","
-            << (yaw_diff * 180.0 / M_PI) << "," << yaw_diff << ","
-            << current_pose.position.x << "," << current_pose.position.y << "," << current_pose.position.z << ","
-            << (current_yaw * 180.0 / M_PI) << ","
-            << target_pose.position.x << "," << target_pose.position.y << "," << target_pose.position.z << ","
-            << (target_yaw * 180.0 / M_PI) << ","
-            << result << std::endl;
-    }
-
-    // 7. Log displacement to terminal
-    RCLCPP_INFO(this->get_logger(),
-        "[%s] Viewpose ID: %d | dx=%.3fm dy=%.3fm dz=%.3fm euclidean=%.3fm | yaw_diff=%.2f\u00b0 (%.4f rad) | Result: %s",
-        phase_name.c_str(), curr_nav_goal_, dx, dy, dz, euc_dist,
-        std::abs(yaw_diff * 180.0 / M_PI), yaw_diff, result.c_str());
-}
-
-
-
-std::string InspectionPlannerNode::log_prefix(const std::string& level){
-    auto now = this->get_clock()->now();
-    int64_t ns = now.nanoseconds();
-    int64_t secs = ns / 1'000'000'000;
-    int64_t nsecs = ns % 1'000'000'000;
-    std::ostringstream oss;
-    oss << "[" << secs << "." << std::setfill('0') << std::setw(9) << nsecs << "] [" << level << "] inspection_planner: ";
-    return oss.str();
-}
-
-void InspectionPlannerNode::log_msg(const std::string& msg){
+void InspectionPlannerNode::log_msg(const std::string &msg)
+{
     RCLCPP_INFO(this->get_logger(), msg.c_str());
-    if (!log_file_stream_.is_open()){
-        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
-        return;
-    }
-    log_file_stream_ << log_prefix("INFO") << msg << std::endl;
+    inspection_planner_interfaces::msg::LogMsg log_msg;
+    log_msg.msg = msg;
+    log_msg.header.stamp = this->get_clock()->now();
+    log_msg.msg_type = log_msg.MSG_TYPE_INFO;
+    this->log_msg_pub_->publish(log_msg);
 }
 
-void InspectionPlannerNode::log_error_msg(const std::string& msg){
+void InspectionPlannerNode::log_error_msg(const std::string &msg)
+{
     RCLCPP_ERROR(this->get_logger(), msg.c_str());
-    if (!log_file_stream_.is_open()){
-        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
-        return;
-    }
-    log_file_stream_ << log_prefix("ERROR") << msg << std::endl;
+    inspection_planner_interfaces::msg::LogMsg log_msg;
+    log_msg.msg = msg;
+    log_msg.header.stamp = this->get_clock()->now();
+    log_msg.msg_type = log_msg.MSG_TYPE_ERROR;
+    this->log_msg_pub_->publish(log_msg);
 }
 
-void InspectionPlannerNode::log_warning_msg(const std::string& msg){
-    RCLCPP_WARN(this->get_logger(), msg.c_str());
-    if (!log_file_stream_.is_open()){
-        RCLCPP_WARN(this->get_logger(), "Log file is not opened!");
-        return;
-    }
-    log_file_stream_ << log_prefix("WARN") << msg << std::endl;
+void InspectionPlannerNode::update_visualization()
+{
+    ViewPoses unvisited_poses_msg, visited_poses_msg, failed_poses_msg;
+    this->build_poses_msg(this->unvisited_poses_, unvisited_poses_msg);
+    this->build_poses_msg(this->visited_poses_, visited_poses_msg);
+    this->build_poses_msg(this->failed_poses_, failed_poses_msg);
+
+    inspection_planner_interfaces::msg::ViewPosesDebug debug_msg;
+    debug_msg.unvisited = unvisited_poses_msg;
+    debug_msg.visited = visited_poses_msg;
+    debug_msg.failed = failed_poses_msg;
+    debug_msg.ordered_ids = tsp_result_;
+
+    viewposes_debug_pub_->publish(debug_msg);
 }
 
-
-
-/* Visualization Functions */
-void InspectionPlannerNode::update_visualization(){
-    visualization_msgs::msg::MarkerArray marker_array;
-
-    // Helper lambda to create a sphere marker for a single waypoint
-    auto create_marker = [&](uint32_t id, const geometry_msgs::msg::Pose& pose,
-                             const std::string& ns, 
-                             float r, float g, float b)
-    {
-        visualization_msgs::msg::Marker marker;
-        marker.header.frame_id = "map";
-        marker.header.stamp = this->get_clock()->now();
-        marker.ns = ns;
-        marker.id = id;
-        marker.type = visualization_msgs::msg::Marker::SPHERE;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-
-        marker.pose.position.x = pose.position.x;
-        marker.pose.position.y = pose.position.y;
-        marker.pose.position.z = pose.position.z;
-        marker.pose.orientation.w = 1.0;
-
-        marker.scale.x = 0.5;
-        marker.scale.y = 0.5;
-        marker.scale.z = 0.5;
-
-        marker.color.r = r;
-        marker.color.g = g;
-        marker.color.b = b;
-        marker.color.a = 1.0;
-
-        marker.lifetime = rclcpp::Duration(0, 0);  // persistent
-
-        marker_array.markers.push_back(marker);
-    };
-
-    // Unvisited waypoints — blue
-    for (const auto& [id, pose] : unvisited_poses_){
-        create_marker(id, pose, "inspection_pose", 0.0f, 0.0f, 1.0f);
-    }
-
-    // Visited waypoints — green
-    for (const auto& [id, pose] : visited_poses_){
-        create_marker(id, pose, "inspection_pose", 0.0f, 1.0f, 0.0f);
-    }
-
-    // Failed waypoints — red
-    for (const auto& [id, pose] : failed_poses_){
-        create_marker(id, pose, "inspection_pose", 1.0f, 0.0f, 0.0f);
-    }
-
-    // Helper to look up a pose from any of the three maps
-    auto find_pose = [&](uint32_t id) -> const geometry_msgs::msg::Pose* {
-        auto it = unvisited_poses_.find(id);
-        if (it != unvisited_poses_.end()) return &it->second;
-        it = visited_poses_.find(id);
-        if (it != visited_poses_.end()) return &it->second;
-        it = failed_poses_.find(id);
-        if (it != failed_poses_.end()) return &it->second;
-        return nullptr;
-    };
-
-    // Draw arrows between consecutive TSP waypoints showing visit order
-    if (tsp_result_.size() > 1){
-        for (size_t i = 0; i < tsp_result_.size() - 1; ++i){
-            const auto* from_pose = find_pose(tsp_result_[i]);
-            const auto* to_pose   = find_pose(tsp_result_[i + 1]);
-            if (!from_pose || !to_pose) continue;
-
-            visualization_msgs::msg::Marker arrow;
-            arrow.header.frame_id = "map";
-            arrow.header.stamp = this->get_clock()->now();
-            arrow.ns = "tsp_edges";
-            arrow.id = 10000 + i;  // offset to avoid collision with waypoint IDs
-            arrow.type = visualization_msgs::msg::Marker::ARROW;
-            arrow.action = visualization_msgs::msg::Marker::ADD;
-
-            arrow.points.emplace_back();
-            arrow.points.back().x = from_pose->position.x;
-            arrow.points.back().y = from_pose->position.y;
-            arrow.points.back().z = from_pose->position.z;
-
-            arrow.points.emplace_back();
-            arrow.points.back().x = to_pose->position.x;
-            arrow.points.back().y = to_pose->position.y;
-            arrow.points.back().z = to_pose->position.z;
-
-            arrow.scale.x = 0.1;  // shaft radius
-            arrow.scale.y = 0.2;  // head radius
-
-            arrow.color.r = 0.8f;
-            arrow.color.g = 0.0f;
-            arrow.color.b = 0.3f;
-            arrow.color.a = 0.6f;
-
-            arrow.lifetime = rclcpp::Duration(0, 0);
-
-            marker_array.markers.push_back(arrow);
-        }
-    }
-
-    waypoint_viz_pub_->publish(marker_array);
+void InspectionPlannerNode::log_displacement(const ViewPose& target_pose, const std::string& result, uint8_t phase)
+{
+    auto req = std::make_shared<inspection_planner_interfaces::srv::LogDisplacement::Request>();
+    req->pose = target_pose;
+    req->phase = phase;
+    req->result = result;
+    this->log_displacement_client_->async_send_request(req);
 }
-
-
 
 int main(int argc, char** argv){
     rclcpp::init(argc, argv);
     auto node = std::make_shared<InspectionPlannerNode>();
-    g_inspection_node = node.get();
-
-    // Register signal handler to write inspection summary on shutdown
-    signal(SIGINT, shutdown_handler);
 
     rclcpp::spin(node);
     if (rclcpp::ok()){

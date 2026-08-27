@@ -34,11 +34,20 @@ def generate_launch_description():
         parameters=[config_file]
     )
 
+    logger = Node(
+        package="inspection_planner", 
+        executable="logger", 
+        name="inspection_logger", 
+        parameters=[config_file], 
+        # prefix=['xterm -e gdb -ex run --args']    # debug
+    )
+
     inspection_planner = Node(
         package="inspection_planner", 
         executable="inspection_planner", 
         name="inspection_planner",
-        parameters=[config_file]
+        parameters=[config_file], 
+        # prefix=['xterm -e gdb -ex run --args']    # debug
     )
 
     rviz = TimerAction(
@@ -58,6 +67,7 @@ def generate_launch_description():
     return LaunchDescription([
         declare_launch_rviz, 
         tsp_solver, 
+        logger, 
         inspection_planner, 
         rviz
     ])

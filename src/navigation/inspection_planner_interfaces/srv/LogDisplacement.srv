@@ -1,0 +1,10 @@
+uint8 PRE_ADJUSTMENT_PHASE=0
+uint8 PRE_ROTATION_PHASE=1
+uint8 POST_ROTATION_PHASE=2
+
+inspection_planner_interfaces/ViewPose pose
+string result
+uint8 phase
+---
+bool success
+string message

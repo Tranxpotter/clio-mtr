@@ -1,0 +1,4 @@
+inspection_planner_interfaces/ViewPoses visited
+inspection_planner_interfaces/ViewPoses unvisited
+inspection_planner_interfaces/ViewPoses failed
+uint32[] ordered_ids

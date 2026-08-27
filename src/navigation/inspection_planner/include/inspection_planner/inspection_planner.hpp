@@ -17,6 +17,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/u_int32.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
@@ -34,6 +36,9 @@
 #include <inspection_planner_interfaces/msg/view_pose.hpp>
 #include <inspection_planner_interfaces/srv/solve_tsp.hpp>
 #include <inspection_planner_interfaces/action/nav_to_pose.hpp>
+#include <inspection_planner_interfaces/msg/view_poses_debug.hpp>
+#include <inspection_planner_interfaces/msg/log_msg.hpp>
+#include <inspection_planner_interfaces/srv/log_displacement.hpp>
 
 using NavToPose = inspection_planner_interfaces::action::NavToPose;
 using NavGoalHandle = rclcpp_action::ClientGoalHandle<NavToPose>;
@@ -47,7 +52,6 @@ class InspectionPlannerNode : public rclcpp::Node
 {
     public: 
         InspectionPlannerNode();
-        void write_inspection_summary();
     
     private:
         rclcpp::Subscription<ViewPoses>::SharedPtr inspection_poses_sub_;               // Inspection poses input topic
@@ -59,10 +63,13 @@ class InspectionPlannerNode : public rclcpp::Node
         rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
 
         // Debug pubs
-        rclcpp::Publisher<ViewPose>::SharedPtr next_goal_pub_;
-        rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr waypoint_viz_pub_;
-
-        // TODO: Visualizer topics
+        rclcpp::Publisher<std_msgs::msg::String>::SharedPtr msg_pub_;
+        rclcpp::Publisher<inspection_planner_interfaces::msg::LogMsg>::SharedPtr log_msg_pub_;
+        rclcpp::Publisher<inspection_planner_interfaces::msg::ViewPosesDebug>::SharedPtr viewposes_debug_pub_;
+        rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr num_poses_received_pub_;
+        rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr num_poses_added_pub_;
+        rclcpp::Client<inspection_planner_interfaces::srv::LogDisplacement>::SharedPtr log_displacement_client_;
+        
 
         std::string inspection_poses_sub_topic_;    // inspection_poses_sub_
         std::string nav_action_server_name_;        // nav_action_client_
@@ -177,6 +184,7 @@ class InspectionPlannerNode : public rclcpp::Node
         /* Helper funcs */
 
         void get_new_waypoints_order();
+        void move_failed_to_unvisited();
         
         /**
          * @brief Merge inspection poses that are similar to each other
@@ -195,7 +203,7 @@ class InspectionPlannerNode : public rclcpp::Node
             std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& new_poses, 
             const std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& prev_poses
         );
-        
+
         /**
          * @brief Build poses map from ViewPoses message, key=id, value=ViewPose
          * 
@@ -206,9 +214,6 @@ class InspectionPlannerNode : public rclcpp::Node
             const ViewPoses::SharedPtr msg, 
             std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& map
         );
-
-
-        void move_failed_to_unvisited();
         
         /**
          * @brief Build ViewPoses message from pose map
@@ -252,75 +257,30 @@ class InspectionPlannerNode : public rclcpp::Node
             std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& map, 
             const std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& new_map
         );
-        
-        
-        
 
-
-        /* Logging Functions */
-        // tf2 is only used for logging, for now
-        std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
-        std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-
-
-        std::string root_dir_ = ROOT_DIR;
-        std::ofstream log_file_stream_;
-
-        // CSV streams for navigation accuracy analysis
-        std::ofstream csv_post_rotation_stream_;
-        std::ofstream csv_pre_rotation_stream_;
-        std::ofstream csv_pre_adjustment_stream_;
-
-        // Summary log stream (written to analysis/ folder)
-        std::ofstream summary_stream_;
-
-        // Statistics counters (cumulative across all inspection_poses_callback invocations)
-        uint32_t total_poses_received_ = 0;
-        uint32_t total_poses_added_ = 0;
-
-        // Displacement logging phase
-        enum class DisplacementPhase { PRE_ROTATION, PRE_ADJUSTMENT, POST_ROTATION };
-
-        void logger_init();
-        void csv_logger_init();
+        /* Debug Use */
 
         /**
-         * @brief Get ROS2-style timestamped prefix for log file
-         * Format: [<timestamp>] [<level>] inspection_planner: 
-         */
-        std::string log_prefix(const std::string& level);
-        
-        /**
-         * @brief Log to terminal (INFO) + log file
+         * @brief Log message to RCLCPP_INFO and publish to logger node
          * 
-         * @param msg
+         * @param msg 
          */
         void log_msg(const std::string& msg);
+
         /**
-         * @brief Log to terminal (ERROR) + log file
+         * @brief Log message to RCLCPP_ERROR and publish to logger node
          * 
-         * @param msg
+         * @param msg 
          */
         void log_error_msg(const std::string& msg);
+
         /**
-         * @brief Log to terminal (WARN) + log file
+         * @brief Publish waypoints to logger node
          * 
-         * @param msg
          */
-        void log_warning_msg(const std::string& msg);
-
-        void log_displacement(const geometry_msgs::msg::Pose& target_pose, const std::string& result, DisplacementPhase phase);
-        void log_waypoint();
-        void log_waypoint_failed();
-
-
-        /* Visualization Functions */
         void update_visualization();
 
-
-
-
-
+        void log_displacement(const ViewPose& target_pose, const std::string& result, uint8_t phase);
 };
 
 

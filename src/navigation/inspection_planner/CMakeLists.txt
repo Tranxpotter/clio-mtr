@@ -30,6 +30,21 @@ ament_target_dependencies(tsp_solver
   std_msgs
 )
 
+# Logger executable
+add_executable(logger src/logger.cpp)
+target_include_directories(logger PRIVATE include)
+ament_target_dependencies(logger
+  rclcpp
+  inspection_planner_interfaces
+  geometry_msgs
+  visualization_msgs
+  std_msgs
+  std_srvs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+
 # Inspection Planner executable
 add_executable(inspection_planner src/inspection_planner.cpp)
 target_include_directories(inspection_planner PRIVATE include)
@@ -51,6 +66,11 @@ ament_target_dependencies(inspection_planner
 # Install executables
 install(TARGETS
   tsp_solver
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(TARGETS
+  logger
   DESTINATION lib/${PROJECT_NAME}
 )
 
