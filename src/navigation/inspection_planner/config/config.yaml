@@ -12,3 +12,8 @@ inspection_planner:
     pose_merge_distance_tolerance: 0.3
     pose_merge_angular_tolerance: 0.349066  # 20 degrees in radians
     use_tsp: true
+
+inspection_logger:
+  ros__parameters:
+    edge_gradient_max_len: 10.0
+    edge_gradient_min_len: 1.0

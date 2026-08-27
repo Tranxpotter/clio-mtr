@@ -31,6 +31,12 @@ void LoggerNode::params_init(){
 
     this->edge_gradient_max_len_ = this->get_parameter("edge_gradient_max_len").as_double();
     this->edge_gradient_min_len_ = this->get_parameter("edge_gradient_min_len").as_double();
+
+    if (this->edge_gradient_max_len_ <= this->edge_gradient_min_len_){
+        RCLCPP_ERROR(this->get_logger(), "Gradient max length must be bigger than min length! Using default values...");
+        this->edge_gradient_max_len_ = 10.0; 
+        this->edge_gradient_min_len_ = 1.0;
+    }
 }
 
 void LoggerNode::files_init(){
