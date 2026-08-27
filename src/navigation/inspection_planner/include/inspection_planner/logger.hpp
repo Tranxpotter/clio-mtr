@@ -8,11 +8,13 @@
 #include <iomanip>
 #include <iostream>
 #include <fstream>
+#include <cmath>
 
 
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int32.hpp>
+#include <std_msgs/msg/color_rgba.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <geometry_msgs/msg/pose_array.hpp>
@@ -41,7 +43,8 @@ class LoggerNode : public rclcpp::Node
 
     private:
     // Parameters
-
+    double edge_gradient_max_len_;
+    double edge_gradient_min_len_;
 
     // Subscriptions
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr msg_sub_;
@@ -78,6 +81,7 @@ class LoggerNode : public rclcpp::Node
     std::ofstream summary_stream_;
 
     // Init Methods
+    void params_init();
     void files_init();
     void communications_init();
 
@@ -116,6 +120,30 @@ class LoggerNode : public rclcpp::Node
         {2, "ERROR"}
     };
 
+    void add_waypoint_marker(
+        visualization_msgs::msg::MarkerArray& marker_array, const uint32_t id, 
+        const geometry_msgs::msg::Pose& pose, float r, float g, float b
+    );
+
+    void add_edge_marker(
+        visualization_msgs::msg::MarkerArray& marker_array, const uint32_t id, 
+        const geometry_msgs::msg::Pose* from_pose, const geometry_msgs::msg::Pose* to_pose 
+    );
+
+    void add_gradient_edge_marker(
+        visualization_msgs::msg::MarkerArray& marker_array, const uint32_t id, 
+        const geometry_msgs::msg::Pose* from_pose, const geometry_msgs::msg::Pose* to_pose 
+    );
+    std_msgs::msg::ColorRGBA get_edge_gradient_color(double length);
+    
+    visualization_msgs::msg::Marker create_simple_edge(
+        const int32_t id, const std::string& ns, 
+        const geometry_msgs::msg::Pose* from_pose, const geometry_msgs::msg::Pose* to_pose
+    );
+
+    double calculate_distance(const geometry_msgs::msg::Point& p1, const geometry_msgs::msg::Point& p2);
+
+
     /**
      * @brief Build poses map from ViewPoses message, key=id, value=ViewPose
      * 
@@ -132,6 +160,7 @@ class LoggerNode : public rclcpp::Node
      */
     void build_poses_msg(const std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& map, ViewPoses& msg);
 
+    
 };
 
 #endif

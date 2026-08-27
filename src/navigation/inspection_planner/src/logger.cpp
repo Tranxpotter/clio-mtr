@@ -17,11 +17,20 @@ std::string get_datetime_string() {
 LoggerNode::LoggerNode()
 : Node("inspection_logger")
 {
+    params_init();
     files_init();
     communications_init();
 
     this->tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     this->tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+}
+
+void LoggerNode::params_init(){
+    this->declare_parameter<double>("edge_gradient_max_len", 10.0);
+    this->declare_parameter<double>("edge_gradient_min_len", 1.0);
+
+    this->edge_gradient_max_len_ = this->get_parameter("edge_gradient_max_len").as_double();
+    this->edge_gradient_min_len_ = this->get_parameter("edge_gradient_min_len").as_double();
 }
 
 void LoggerNode::files_init(){
@@ -153,75 +162,19 @@ void LoggerNode::pub_marker_array()
 {
     visualization_msgs::msg::MarkerArray marker_array;
 
-    // Helper lambda to create a sphere marker for a single waypoint
-    auto create_marker = [&](uint32_t id, const geometry_msgs::msg::Pose& pose,
-                             float r, float g, float b)
-    {
-        // Create waypoint markers
-        visualization_msgs::msg::Marker marker;
-        marker.header.frame_id = "map";
-        marker.header.stamp = this->get_clock()->now();
-        marker.ns = "waypoint";
-        marker.id = id;
-        marker.type = visualization_msgs::msg::Marker::SPHERE;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-
-        marker.pose.position.x = pose.position.x;
-        marker.pose.position.y = pose.position.y;
-        marker.pose.position.z = pose.position.z;
-        marker.pose.orientation.w = 1.0;
-
-        marker.scale.x = 0.5;
-        marker.scale.y = 0.5;
-        marker.scale.z = 0.5;
-
-        marker.color.r = r;
-        marker.color.g = g;
-        marker.color.b = b;
-        marker.color.a = 1.0;
-
-        marker.lifetime = rclcpp::Duration(0, 0);  // persistent
-
-        marker_array.markers.push_back(marker);
-
-        // Create text marker
-        visualization_msgs::msg::Marker text_marker;
-
-        text_marker.header.frame_id = "map";
-        text_marker.header.stamp = this->get_clock()->now();
-        text_marker.ns = "waypoint_text";
-        text_marker.id = id;
-        text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
-        text_marker.action = visualization_msgs::msg::Marker::ADD;
-
-        text_marker.pose.position.x = pose.position.x;
-        text_marker.pose.position.y = pose.position.y;
-        text_marker.pose.position.z = pose.position.z + 0.3;
-
-        // text_marker.scale.x = 0.5;
-        // text_marker.scale.y = 0.5;
-        text_marker.scale.z = 0.2;
-        text_marker.color.r = 1.0;
-        text_marker.color.g = 1.0;
-        text_marker.color.b = 1.0;
-        text_marker.color.a = 1.0;
-        text_marker.text = std::to_string(id);
-        marker_array.markers.push_back(text_marker);
-    };
-
     // Unvisited waypoints — blue
     for (const auto& [id, pose] : unvisited_poses_){
-        create_marker(id, pose, 0.0f, 0.0f, 1.0f);
+        this->add_waypoint_marker(marker_array, id, pose, 0.0f, 0.0f, 1.0f);
     }
 
     // Visited waypoints — green
     for (const auto& [id, pose] : visited_poses_){
-        create_marker(id, pose, 0.0f, 1.0f, 0.0f);
+        this->add_waypoint_marker(marker_array, id, pose, 0.0f, 1.0f, 0.0f);
     }
 
     // Failed waypoints — red
     for (const auto& [id, pose] : failed_poses_){
-        create_marker(id, pose, 1.0f, 0.0f, 0.0f);
+        this->add_waypoint_marker(marker_array, id, pose, 1.0f, 0.0f, 0.0f);
     }
 
     // Helper to look up a pose from any of the three maps
@@ -242,40 +195,15 @@ void LoggerNode::pub_marker_array()
             const auto* to_pose   = find_pose(ordered_ids_[i + 1]);
             if (!from_pose || !to_pose) continue;
 
-            visualization_msgs::msg::Marker arrow;
-            arrow.header.frame_id = "map";
-            arrow.header.stamp = this->get_clock()->now();
-            arrow.ns = "tsp_edges";
-            arrow.id = 10000 + i;  // offset to avoid collision with waypoint IDs
-            arrow.type = visualization_msgs::msg::Marker::ARROW;
-            arrow.action = visualization_msgs::msg::Marker::ADD;
-
-            arrow.points.emplace_back();
-            arrow.points.back().x = from_pose->position.x;
-            arrow.points.back().y = from_pose->position.y;
-            arrow.points.back().z = from_pose->position.z;
-
-            arrow.points.emplace_back();
-            arrow.points.back().x = to_pose->position.x;
-            arrow.points.back().y = to_pose->position.y;
-            arrow.points.back().z = to_pose->position.z;
-
-            arrow.scale.x = 0.1;  // shaft radius
-            arrow.scale.y = 0.2;  // head radius
-
-            arrow.color.r = 0.8f;
-            arrow.color.g = 0.0f;
-            arrow.color.b = 0.3f;
-            arrow.color.a = 0.6f;
-
-            arrow.lifetime = rclcpp::Duration(0, 0);
-
-            marker_array.markers.push_back(arrow);
+            add_edge_marker(marker_array, i, from_pose, to_pose);
+            add_gradient_edge_marker(marker_array, i, from_pose, to_pose);
         }
     }
 
     viewpoints_viz_pub_->publish(marker_array);
 }
+
+
 
 void LoggerNode::pub_pose_array()
 {
@@ -437,9 +365,139 @@ std::string LoggerNode::get_log_prefix(const uint8_t& level, const rclcpp::Time&
 }
 
 
+void LoggerNode::add_waypoint_marker(
+    visualization_msgs::msg::MarkerArray& marker_array, 
+    const uint32_t id, 
+    const geometry_msgs::msg::Pose &pose, float r, float g, float b)
+{
+    visualization_msgs::msg::Marker marker;
+    marker.header.frame_id = "map";
+    marker.header.stamp = this->get_clock()->now();
+    marker.ns = "waypoint";
+    marker.id = id;
+    marker.type = visualization_msgs::msg::Marker::SPHERE;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+
+    marker.pose.position.x = pose.position.x;
+    marker.pose.position.y = pose.position.y;
+    marker.pose.position.z = pose.position.z;
+    marker.pose.orientation.w = 1.0;
+
+    marker.scale.x = 0.5;
+    marker.scale.y = 0.5;
+    marker.scale.z = 0.5;
+
+    marker.color.r = r;
+    marker.color.g = g;
+    marker.color.b = b;
+    marker.color.a = 1.0;
+
+    marker.lifetime = rclcpp::Duration(0, 0);  // persistent
+
+    marker_array.markers.push_back(marker);
+
+    // Create text marker
+    visualization_msgs::msg::Marker text_marker;
+
+    text_marker.header.frame_id = "map";
+    text_marker.header.stamp = this->get_clock()->now();
+    text_marker.ns = "waypoint_text";
+    text_marker.id = id;
+    text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+    text_marker.action = visualization_msgs::msg::Marker::ADD;
+
+    text_marker.pose.position.x = pose.position.x;
+    text_marker.pose.position.y = pose.position.y;
+    text_marker.pose.position.z = pose.position.z + 0.3;
+
+    // text_marker.scale.x = 0.5;
+    // text_marker.scale.y = 0.5;
+    text_marker.scale.z = 0.2;
+    text_marker.color.r = 1.0;
+    text_marker.color.g = 1.0;
+    text_marker.color.b = 1.0;
+    text_marker.color.a = 1.0;
+    text_marker.text = std::to_string(id);
+    marker_array.markers.push_back(text_marker);
+}
+
+void LoggerNode::add_edge_marker(visualization_msgs::msg::MarkerArray &marker_array, const uint32_t id, const geometry_msgs::msg::Pose *from_pose, const geometry_msgs::msg::Pose *to_pose)
+{
+    auto edge = this->create_simple_edge(id, "edge", from_pose, to_pose);
+    edge.scale.x = 0.1;  // shaft radius
+    edge.scale.y = 0.2;  // head radius
+
+    edge.color.r = 0.8f;
+    edge.color.g = 0.0f;
+    edge.color.b = 0.3f;
+    edge.color.a = 0.8f;
+
+    edge.lifetime = rclcpp::Duration(0, 0);
+    marker_array.markers.push_back(edge);
+}
 
 
+void LoggerNode::add_gradient_edge_marker(visualization_msgs::msg::MarkerArray &marker_array, const uint32_t id, const geometry_msgs::msg::Pose *from_pose, const geometry_msgs::msg::Pose *to_pose)
+{
+    auto edge = this->create_simple_edge(id, "gradient_edge", from_pose, to_pose);
+    auto color = get_edge_gradient_color(calculate_distance(from_pose->position, to_pose->position));
+    edge.color = color;
 
+    edge.scale.x = 0.1;  // shaft radius
+    edge.scale.y = 0.2;  // head radius
+
+    edge.lifetime = rclcpp::Duration(0, 0);
+    marker_array.markers.push_back(edge);
+}
+
+std_msgs::msg::ColorRGBA LoggerNode::get_edge_gradient_color(double length)
+{
+    std_msgs::msg::ColorRGBA color;
+    double clamped_len = std::clamp(length, this->edge_gradient_min_len_, this->edge_gradient_max_len_);
+    double t = static_cast<double>((clamped_len - edge_gradient_min_len_) / (edge_gradient_max_len_ - edge_gradient_min_len_));
+
+    // Direct Blue (0,0,1) -> Red (1,0,0)
+    color.r = t;
+    color.g = 0.0f;
+    color.b = 1.0f - t;
+    color.a = 1.0f;
+    return color;
+}
+
+
+visualization_msgs::msg::Marker LoggerNode::create_simple_edge(const int32_t id, const std::string &ns, const geometry_msgs::msg::Pose *from_pose, const geometry_msgs::msg::Pose *to_pose)
+{
+    visualization_msgs::msg::Marker marker;
+
+    marker.header.frame_id = "map";
+    marker.header.stamp = this->get_clock()->now();
+    marker.ns = ns;
+    marker.id = id;
+    marker.type = visualization_msgs::msg::Marker::ARROW;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+
+    marker.points.emplace_back();
+    marker.points.back().x = from_pose->position.x;
+    marker.points.back().y = from_pose->position.y;
+    marker.points.back().z = from_pose->position.z;
+
+    marker.points.emplace_back();
+    marker.points.back().x = to_pose->position.x;
+    marker.points.back().y = to_pose->position.y;
+    marker.points.back().z = to_pose->position.z;
+
+    marker.lifetime = rclcpp::Duration(0, 0);
+    return marker;
+}
+
+
+double LoggerNode::calculate_distance(const geometry_msgs::msg::Point &p1, const geometry_msgs::msg::Point &p2)
+{
+    double dx = p2.x - p1.x;
+    double dy = p2.y - p1.y;
+    double dz = p2.z - p1.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
 
 
 void LoggerNode::build_poses_map(

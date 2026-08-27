@@ -6,6 +6,7 @@ Panels:
       Expanded:
         - /Global Options1
         - /Inspection Waypoints1
+        - /Inspection Waypoints1/Namespaces1
         - /PoseArray1
       Splitter Ratio: 0.658823549747467
     Tree Height: 865
@@ -652,7 +653,8 @@ Visualization Manager:
       Enabled: true
       Name: Inspection Waypoints
       Namespaces:
-        tsp_edges: true
+        edge: false
+        gradient_edge: true
         waypoint: true
         waypoint_text: true
       Topic:
@@ -722,7 +724,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/ThirdPersonFollower
-      Distance: 36.49471664428711
+      Distance: 20.5069580078125
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
