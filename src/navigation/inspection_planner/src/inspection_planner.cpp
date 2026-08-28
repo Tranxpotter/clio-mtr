@@ -157,6 +157,11 @@ InspectionPlannerNode::InspectionPlannerNode()
     log_displacement_client_ = this->create_client<inspection_planner_interfaces::srv::LogDisplacement>(
         "/inspection_log/log_displacement"
     );
+
+    latest_pose_pub_ = this->create_publisher<inspection_planner_interfaces::msg::ViewPose>(
+       "/inspection_debug/latest_pose", 
+       5 
+    );
 }
 
 
@@ -207,7 +212,7 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
             this->log_msg("TSP solver message: " + response->message);
         }
     } else {
-        this->log_msg("TSP solver failed: %s" + response->message);
+        this->log_msg("TSP solver failed: " + response->message);
         this->poses_order_.clear();
     }
     waiting_new_tsp_result_ = false;
@@ -265,12 +270,12 @@ void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::Shared
 
     update_visualization();
 
-    if (poses_order_.empty()){
-        inspection_active_ = false;
-        cancel_current_goal();
-        this->log_msg("Inspection complete."); 
-        return;
-    }
+    // if (poses_order_.empty()){
+    //     inspection_active_ = false;
+    //     cancel_current_goal();
+    //     this->log_msg("Inspection complete."); 
+    //     return;
+    // }
 
     curr_nav_tsp_index_ = 0;
     inspection_active_ = true;
@@ -358,20 +363,20 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
     goal.pose.pose = goal_pose;
 
     this->log_msg("Navigating to goal pose with ID: " + std::to_string(curr_nav_goal_));
-
+    
     // TODO Custom header settings, ViewPoseStamped...
     goal.pose.header.stamp = this->get_clock()->now();
     goal.pose.header.frame_id = "map";
-
+    
     auto send_goal_options = rclcpp_action::Client<NavToPose>::SendGoalOptions();
-        send_goal_options.goal_response_callback =
-        std::bind(&InspectionPlannerNode::nav_goal_response_callback, this, std::placeholders::_1);
-        send_goal_options.feedback_callback =
-        std::bind(&InspectionPlannerNode::nav_feedback_callback, this, std::placeholders::_1, std::placeholders::_2);
-        send_goal_options.result_callback =
-        std::bind(&InspectionPlannerNode::nav_result_callback, this, std::placeholders::_1, next_pose_id);
+    send_goal_options.goal_response_callback =
+    std::bind(&InspectionPlannerNode::nav_goal_response_callback, this, std::placeholders::_1);
+    send_goal_options.feedback_callback =
+    std::bind(&InspectionPlannerNode::nav_feedback_callback, this, std::placeholders::_1, std::placeholders::_2);
+    send_goal_options.result_callback =
+    std::bind(&InspectionPlannerNode::nav_result_callback, this, std::placeholders::_1, next_pose_id);
     nav_action_client_->async_send_goal(goal, send_goal_options);
-
+    
     if (planner_mode_ == PlannerMode::Tsp){
         // Redo tsp timer
         if (this->redo_tsp_timer_ && !this->redo_tsp_timer_->is_canceled()){
@@ -388,6 +393,12 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
             }
         );
     }
+    
+    // Debug pose publishing
+    ViewPose debug_pose_msg;
+    debug_pose_msg.pose = goal_pose;
+    debug_pose_msg.id = curr_nav_goal_;
+    this->latest_pose_pub_->publish(debug_pose_msg);
 
     return true;
 }

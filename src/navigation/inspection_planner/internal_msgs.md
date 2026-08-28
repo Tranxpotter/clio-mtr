@@ -33,3 +33,9 @@
   - type: `geometry_msgs::msg::PoseArray`
   - qos: 5
   - function: Rviz visualization of orientation of view poses
+
+# Debugging Messages
+- name: `/inspection_debug/latest_pose`
+  - type: `inspection_planner_interfaces::msg::ViewPose`
+  - qos: 5
+  - function: Publishes the latest view pose for debugging purposes

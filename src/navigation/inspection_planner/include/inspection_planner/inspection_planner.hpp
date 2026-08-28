@@ -69,6 +69,7 @@ class InspectionPlannerNode : public rclcpp::Node
         rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr num_poses_received_pub_;
         rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr num_poses_added_pub_;
         rclcpp::Client<inspection_planner_interfaces::srv::LogDisplacement>::SharedPtr log_displacement_client_;
+        rclcpp::Publisher<inspection_planner_interfaces::msg::ViewPose>::SharedPtr latest_pose_pub_;
         
 
         std::string inspection_poses_sub_topic_;    // inspection_poses_sub_
