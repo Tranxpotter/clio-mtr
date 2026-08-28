@@ -83,7 +83,24 @@ class InspectionPlannerNode : public rclcpp::Node
         double pose_merge_angular_tolerance_;
         double redo_tsp_period_;
         int success_count_for_retry_threshold_;
-        bool use_tsp_;
+
+        enum class PlannerMode{
+            Ascending, 
+            TspOnce, 
+            Tsp, 
+            RollingTsp
+        };
+        PlannerMode planner_mode_;
+        std::unordered_map<std::string, PlannerMode> PLANNER_MODE_MATCH = {
+            {"ascending", PlannerMode::Ascending}, 
+            {"tsp-once", PlannerMode::TspOnce}, 
+            {"tsp", PlannerMode::Tsp}, 
+            {"rolling-tsp", PlannerMode::RollingTsp}
+        };
+
+        bool do_retry_;
+        int rolling_window_size_;
+        
 
 
         /* Subscriber and Server Callbacks */
@@ -132,7 +149,7 @@ class InspectionPlannerNode : public rclcpp::Node
         std::unordered_map<uint32_t, geometry_msgs::msg::Pose> unvisited_poses_;
         std::unordered_map<uint32_t, geometry_msgs::msg::Pose> visited_poses_;
         std::unordered_map<uint32_t, geometry_msgs::msg::Pose> failed_poses_;
-        std::vector<uint32_t> tsp_result_;
+        std::vector<uint32_t> poses_order_;
 
         rclcpp::TimerBase::SharedPtr redo_tsp_timer_{nullptr};
 
@@ -141,14 +158,16 @@ class InspectionPlannerNode : public rclcpp::Node
         uint8_t nav_state_ = 0;
         bool allow_pub_new_waypoint_ = true;
 
-        int success_count_for_retry_ = 0;
-        bool retrying_failed_poses_ = false; // No tsp use only
+        int success_count_for_retry_ = 0; // tsp mode use
+        bool is_retrying_ = false; // Whether planner is retrying failed poses or not, !tsp mode use
 
+        std::vector<uint32_t> rolling_window_;
+        std::vector<uint32_t> failed_rolling_window_;
 
         /* Navigation Handlers and Callbacks */
         NavGoalHandle::SharedPtr nav_goal_handle_;
         int curr_nav_goal_ = -1;
-        bool inspection_active = false; // Whether inspection is ongoing or not
+        bool inspection_active_ = false; // Whether inspection is ongoing or not
         bool planner_found_path_ = true;
 
         /**
@@ -179,12 +198,23 @@ class InspectionPlannerNode : public rclcpp::Node
          * @return true 
          * @return false 
          */
-        void get_new_distance_matrix();
+        void get_new_distance_matrix(const std::unordered_map<uint32_t, geometry_msgs::msg::Pose> poses);
+        void get_new_distance_matrix(const std::vector<uint32_t> pose_ids);
 
         /* Helper funcs */
 
-        void get_new_waypoints_order();
+        /**
+         * @brief Get waypoints order and start inspection
+         * 
+         */
+        void get_new_waypoints_order(bool init=false);
+
+        /**
+         * @brief Move failed poses to unvisited poses
+         * 
+         */
         void move_failed_to_unvisited();
+        void move_failed_to_unvisited(std::vector<uint32_t> ids);
         
         /**
          * @brief Merge inspection poses that are similar to each other
@@ -280,6 +310,13 @@ class InspectionPlannerNode : public rclcpp::Node
          */
         void update_visualization();
 
+        /**
+         * @brief Publish pose, result and phase to logger node to log current robot to waypoint displacement
+         * 
+         * @param target_pose Current navigation target
+         * @param result Success/Failed/Unknown
+         * @param phase Before adjusting 0, Before rotation 1, After rotation 2
+         */
         void log_displacement(const ViewPose& target_pose, const std::string& result, uint8_t phase);
 };
 

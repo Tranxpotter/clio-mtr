@@ -1,6 +1,11 @@
 tsp_solver:
   ros__parameters:
-    solver_algorithm: "nearest_neighbor"
+    service_name: "/solve_tsp"
+    solver_algorithm: "nearest_neighbour"
+    random_seed: 42
+    brute_force_max_nodes: 2000
+    symmetry_tolerance: 0.01
+    qos_depth: 1 
 
 inspection_planner:
   ros__parameters:
@@ -11,8 +16,10 @@ inspection_planner:
     tsp_distance_matrix_topic: "/tsp_distance_matrix"
     pose_merge_distance_tolerance: 0.3
     pose_merge_angular_tolerance: 0.349066  # 20 degrees in radians
-    use_tsp: true
-
+    planner_mode: tsp-once             #  ascending, tsp-once, tsp, rolling-tsp
+    do_retry: false
+    rolling_window_size: 0
+    
 inspection_logger:
   ros__parameters:
     edge_gradient_max_len: 10.0

@@ -48,9 +48,17 @@ InspectionPlannerNode::InspectionPlannerNode()
     success_count_for_retry_threshold_desc.description = "Adds failed poses to tsp calculation if threshold amount of viewposes successfully reached.";
     this->declare_parameter<int>("success_count_for_retry_threshold", 5, success_count_for_retry_threshold_desc);
 
-    auto use_tsp_desc = rcl_interfaces::msg::ParameterDescriptor();
-    use_tsp_desc.description = "Whether to use TSP for ordering waypoints or not. If not, navigate by waypoint ids ascending.";
-    this->declare_parameter<bool>("use_tsp", true, use_tsp_desc);
+    auto planner_mode_desc = rcl_interfaces::msg::ParameterDescriptor();
+    planner_mode_desc.description = "Set inspection planning mode. Supported values: ascending, tsp-once, tsp, rolling-tsp";
+    this->declare_parameter<std::string>("planner_mode", "tsp", planner_mode_desc);
+    
+    auto do_retry_desc = rcl_interfaces::msg::ParameterDescriptor();
+    do_retry_desc.description = "Whether to retry failed waypoints or not.";
+    this->declare_parameter<bool>("do_retry", true, do_retry_desc);
+    
+    auto rolling_window_size_desc = rcl_interfaces::msg::ParameterDescriptor();
+    rolling_window_size_desc.description = "Size of rolling window for rolling-tsp mode.";
+    this->declare_parameter<int>("rolling_window_size", 5, rolling_window_size_desc);
 
     // Get parameters
     inspection_poses_sub_topic_ = this->get_parameter("inspection_poses_topic").as_string();
@@ -64,7 +72,22 @@ InspectionPlannerNode::InspectionPlannerNode()
     pose_merge_angular_tolerance_ = this->get_parameter("pose_merge_angular_tolerance").as_double();
     redo_tsp_period_ = this->get_parameter("redo_tsp_period").as_double();
     success_count_for_retry_threshold_ = this->get_parameter("success_count_for_retry_threshold").as_int();
-    use_tsp_ = this->get_parameter("use_tsp").as_bool();
+    auto planner_mode_str = this->get_parameter("planner_mode").as_string();
+
+    auto mode_itr = PLANNER_MODE_MATCH.find(planner_mode_str);
+    if (mode_itr == PLANNER_MODE_MATCH.end()){
+        RCLCPP_ERROR(this->get_logger(), "Unsupported planner mode %s, using default value: tsp", planner_mode_str.c_str());
+        planner_mode_ = PlannerMode::Tsp;
+    } else {
+        planner_mode_ = mode_itr->second;
+    }
+
+    do_retry_ = this->get_parameter("do_retry").as_bool();
+    rolling_window_size_ = this->get_parameter("rolling_window_size").as_int();
+    if (rolling_window_size_ <= 0){
+        RCLCPP_ERROR(this->get_logger(), "Rolling window size cannot be smaller than 1, defaulting to 5...");
+        rolling_window_size_ = 5;
+    }
 
 
 
@@ -162,9 +185,9 @@ void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr
     num_poses_added_msg.data = static_cast<uint32_t>(new_pose_map.size());
     this->num_poses_added_pub_->publish(num_poses_added_msg);
 
-    this->retrying_failed_poses_ = false; //TODO: Add inspection initailization method
+    this->is_retrying_ = false; //TODO: Add inspection initailization method
     
-    get_new_waypoints_order();
+    get_new_waypoints_order(true);
 }
 
 void InspectionPlannerNode::distance_matrix_callback(const TspDistanceMatrix::SharedPtr msg){
@@ -178,52 +201,79 @@ void InspectionPlannerNode::distance_matrix_callback(const TspDistanceMatrix::Sh
 void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::SharedFuture future){
     auto response = future.get();
     if (response->success){
-        this->tsp_result_ = response->ordered_waypoint_ids;
-        this->log_msg("TSP solved. Ordered waypoints: " + std::to_string(this->tsp_result_.size()));
+        this->poses_order_ = response->ordered_waypoint_ids;
+        this->log_msg("TSP solved. Ordered waypoints: " + std::to_string(this->poses_order_.size()));
         if (!response->message.empty()) {
             this->log_msg("TSP solver message: " + response->message);
         }
     } else {
         this->log_msg("TSP solver failed: %s" + response->message);
-        this->tsp_result_.clear();
+        this->poses_order_.clear();
     }
     waiting_new_tsp_result_ = false;
 
-    // For every viewpose that is not in tsp result, put them in the 'failed' list
-    std::string failed_poses_log;
-    for (auto itr = unvisited_poses_.begin(); itr != unvisited_poses_.end();){
-        auto pose = *itr;
-        bool found = false;
-        for (auto valid_pose_id : tsp_result_){
-            if (valid_pose_id == pose.first){
-                found = true;
-                break;
+    if (planner_mode_ == PlannerMode::Tsp || planner_mode_ == PlannerMode::TspOnce){
+        // For every viewpose that is not in tsp result, put them in the 'failed' list
+        std::string failed_poses_log;
+        for (auto itr = unvisited_poses_.begin(); itr != unvisited_poses_.end();){
+            auto pose = *itr;
+            bool found = false;
+            for (auto valid_pose_id : poses_order_){
+                if (valid_pose_id == pose.first){
+                    found = true;
+                    break;
+                }
+            }
+            if (!found){
+                failed_poses_log += std::to_string(pose.first) + " ";
+                failed_poses_[pose.first] = pose.second;
+                itr = unvisited_poses_.erase(itr);
+            } else {
+                itr++;
             }
         }
-        if (!found){
-            failed_poses_log += std::to_string(pose.first) + " ";
-            failed_poses_[pose.first] = pose.second;
-            itr = unvisited_poses_.erase(itr);
-        } else {
-            itr++;
+    
+        if (!failed_poses_log.empty()){
+            this->log_msg("The following waypoints failed: " + failed_poses_log);
         }
     }
-
-    if (!failed_poses_log.empty()){
-        RCLCPP_INFO(this->get_logger(), "The following waypoints failed: %s", failed_poses_log.c_str());
+    else if (planner_mode_ == PlannerMode::RollingTsp){
+        // Put every viewpose inside rolling window that isnt in tsp result into failed rolling window and failed poses
+        std::string failed_poses_log;
+        for (auto itr = rolling_window_.begin(); itr != rolling_window_.end();){
+            bool found = false;
+            uint32_t id = *itr;
+            for (auto valid_pos_id : poses_order_){
+                if (valid_pos_id == id){
+                    found = true;
+                    break;
+                }
+            }
+            if (!found){
+                failed_rolling_window_.push_back(id);
+                itr = rolling_window_.erase(itr);
+                auto unvisited_node = unvisited_poses_.extract(id);
+                if (unvisited_node){
+                    failed_poses_.insert(std::move(unvisited_node));
+                }
+                failed_poses_log += std::to_string(id) + " ";
+            } else {
+                itr++;
+            }
+        }
     }
 
     update_visualization();
 
-    if (tsp_result_.empty()){
-        inspection_active = false;
+    if (poses_order_.empty()){
+        inspection_active_ = false;
         cancel_current_goal();
-        RCLCPP_INFO(this->get_logger(), "Inspection complete."); // TODO: inspection statistics, placeholder next waypoint?
+        this->log_msg("Inspection complete."); 
         return;
     }
 
     curr_nav_tsp_index_ = 0;
-    inspection_active = true;
+    inspection_active_ = true;
     pub_next_nav_goal();
 }
 
@@ -244,11 +294,11 @@ void InspectionPlannerNode::reset_callback(const std_srvs::srv::Trigger::Request
     (void) request;
     (void) response;
     this->log_msg("Resetting inspection...");
-    inspection_active = false;
+    inspection_active_ = false;
     unvisited_poses_.clear();
     visited_poses_.clear();
     failed_poses_.clear();
-    tsp_result_.clear();
+    poses_order_.clear();
 
     cancel_current_goal();
 }
@@ -273,12 +323,12 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
     int next_pose_id = -1;
     // Search for valid nav goal pose id
     while (true){
-        if (curr_nav_tsp_index_ >= tsp_result_.size()){
-            this->log_msg("No more TSP result, requesting for new waypoints order.");
+        if (curr_nav_tsp_index_ >= poses_order_.size()){
+            this->log_msg("No more ordered waypoints, requesting for new waypoints order.");
             this->get_new_waypoints_order();
             return true;
         }
-        auto next_tsp_id = tsp_result_[curr_nav_tsp_index_];
+        auto next_tsp_id = poses_order_[curr_nav_tsp_index_];
         curr_nav_tsp_index_++;
         if (unvisited_poses_.find(next_tsp_id) != unvisited_poses_.end()){
             // Found valid TSP result
@@ -322,7 +372,7 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
         std::bind(&InspectionPlannerNode::nav_result_callback, this, std::placeholders::_1, next_pose_id);
     nav_action_client_->async_send_goal(goal, send_goal_options);
 
-    if (use_tsp_){
+    if (planner_mode_ == PlannerMode::Tsp){
         // Redo tsp timer
         if (this->redo_tsp_timer_ && !this->redo_tsp_timer_->is_canceled()){
             this->redo_tsp_timer_->cancel();
@@ -330,8 +380,8 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
         this->redo_tsp_timer_ = this->create_wall_timer(
             std::chrono::duration<double>(this->redo_tsp_period_), 
             [this](){
-                if (allow_pub_new_waypoint_ && inspection_active && !waiting_new_tsp_result_){
-                    get_new_distance_matrix();
+                if (allow_pub_new_waypoint_ && inspection_active_ && !waiting_new_tsp_result_){
+                    get_new_distance_matrix(unvisited_poses_);
                 } else {
                     this->redo_tsp_timer_->cancel();
                 }
@@ -346,7 +396,7 @@ bool InspectionPlannerNode::pub_next_nav_goal(){
 void InspectionPlannerNode::nav_goal_response_callback(const NavGoalHandle::SharedPtr& goal_handle){
     if (!goal_handle) {
         this->log_error_msg("Goal was rejected by the action server!");
-        if (inspection_active) pub_next_nav_goal();
+        if (inspection_active_) pub_next_nav_goal();
         return;
     }
     nav_goal_handle_ = goal_handle;
@@ -386,7 +436,7 @@ void InspectionPlannerNode::nav_feedback_callback(
 }
 
 void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResult& result, int goal_id){
-    if (!inspection_active || !nav_goal_handle_) return;
+    if (!inspection_active_ || !nav_goal_handle_) return;
     auto node = unvisited_poses_.extract(goal_id);
 
     nav_goal_handle_ = nullptr;
@@ -433,76 +483,170 @@ void InspectionPlannerNode::nav_result_callback(const NavGoalHandle::WrappedResu
     }
     update_visualization();
     
-    if (inspection_active){
-        pub_next_nav_goal();
+    if (inspection_active_){
+        if (planner_mode_ == PlannerMode::Tsp || planner_mode_ == PlannerMode::RollingTsp){
+            this->get_new_waypoints_order();
+        } else {
+            pub_next_nav_goal();
+        }
     }
 }
 
 
-void InspectionPlannerNode::get_new_waypoints_order(){
-    if (use_tsp_){
-        this->get_new_distance_matrix();
+void InspectionPlannerNode::get_new_waypoints_order(bool init){
+    if (planner_mode_ == PlannerMode::Tsp){
+        // TODO: Do finish condition check and moving poses HERE
+        if (unvisited_poses_.size() == 0){
+            if (failed_poses_.size() == 0){
+                inspection_active_ = false;
+                RCLCPP_INFO(this->get_logger(), "Inspection complete. All inspection poses visited."); // TODO: placeholder next waypoint?
+                return;
+            }
+            move_failed_to_unvisited();
+        }
+
+        if (this->success_count_for_retry_ >= this->success_count_for_retry_threshold_){
+            move_failed_to_unvisited();
+            this->success_count_for_retry_ = 0;
+        }
+        this->get_new_distance_matrix(unvisited_poses_);
+        return;
+    }
+    else if (planner_mode_ == PlannerMode::TspOnce){
+        if (init){
+            this->get_new_distance_matrix(unvisited_poses_);
+            return;
+        }
+        if (do_retry_ && !is_retrying_){
+            this->log_msg("Retrying failed poses...");
+            this->move_failed_to_unvisited();
+            is_retrying_ = true;
+            this->get_new_distance_matrix(unvisited_poses_);
+            return;
+        }
+        this->inspection_active_ = false;
+        this->log_msg("Inspection complete.");
         return;
     }
 
-    this->tsp_result_.clear();
-    this->curr_nav_tsp_index_ = 0;
-    // No TSP inspection terminating condition
-    if (unvisited_poses_.size() == 0){
-        // End inspection if already retried failed poses
-        if (this->retrying_failed_poses_ == true || failed_poses_.size() == 0){
-            this->log_msg("Inspection complete.");
-            return;
-        } else {
-            // Retry failed poses
-            this->retrying_failed_poses_ = true;
-            this->move_failed_to_unvisited();
-            this->log_msg("Retrying failed poses...");
+    else if (planner_mode_ == PlannerMode::Ascending){
+        this->poses_order_.clear();
+        this->curr_nav_tsp_index_ = 0;
+        // Ascending mode terminating condition
+        if (unvisited_poses_.size() == 0){
+            // End inspection if already retried failed poses
+            if (this->do_retry_ && !this->is_retrying_ && failed_poses_.size() != 0){
+                // Retry failed poses
+                this->is_retrying_ = true;
+                this->move_failed_to_unvisited();
+                this->log_msg("Retrying failed poses...");
+            } else {
+                this->inspection_active_ = false;
+                this->log_msg("Inspection complete.");
+                return;
+            }
         }
+    
+        // No TSP, order unvisited waypoints by waypoint ids
+        for (auto [id, pose] : unvisited_poses_){
+            this->poses_order_.push_back(id);
+        }
+        std::sort(this->poses_order_.begin(), this->poses_order_.end());
+        RCLCPP_INFO(this->get_logger(), "Not using TSP solver, number of unvisited viewposes: %zu", this->poses_order_.size());
+    
+        // Build ordered waypoint message
+        std::string msg;
+        for (auto id : this->poses_order_){
+            msg += std::to_string(id) + " ";
+        }
+        RCLCPP_INFO(this->get_logger(), "Ordered waypoints: %s", msg.c_str());
+        update_visualization();
+        inspection_active_ = true;
+        pub_next_nav_goal();
+        return;
     }
 
-    // No TSP, order unvisited waypoints by waypoint ids
-    for (auto [id, pose] : unvisited_poses_){
-        this->tsp_result_.push_back(id);
-    }
-    std::sort(this->tsp_result_.begin(), this->tsp_result_.end());
-    RCLCPP_INFO(this->get_logger(), "Not using TSP solver, number of unvisited viewposes: %zu", this->tsp_result_.size());
+    else if (planner_mode_ == PlannerMode::RollingTsp){
+        // Remove failed/success rolling window ids and add failed to temp failed window
+        std::vector<uint32_t> temp_failed_window; // To store latest failed waypoints, avoid retrying same waypoint on intentional abort
+        for (auto itr = rolling_window_.begin(); itr != rolling_window_.end();){
+            auto id = *itr;
+            if (visited_poses_.find(id) != visited_poses_.end()){
+                itr = rolling_window_.erase(itr);
+            } else if (failed_poses_.find(id) != failed_poses_.end()){
+                itr = rolling_window_.erase(itr);
+                temp_failed_window.push_back(id);
+            } else {
+                itr++;
+            }
+        }
+        
+        // If empty rolling window, get new rolling window
+        if (rolling_window_.size() <= 0){
+            if (unvisited_poses_.size() == 0){
+                inspection_active_ = false;
+                RCLCPP_INFO(this->get_logger(), "Inspection complete."); // TODO: placeholder next waypoint?
+                return;
+            }
 
-    // Build ordered waypoint message
-    std::string msg;
-    for (auto id : this->tsp_result_){
-        msg += std::to_string(id) + " ";
+            std::vector<uint32_t> ordered_ids;
+            for (auto [id, pose] : unvisited_poses_){
+                ordered_ids.push_back(id);
+            }
+            std::sort(ordered_ids.begin(), ordered_ids.end());
+            if (static_cast<int>(ordered_ids.size()) <= rolling_window_size_){
+                rolling_window_ = ordered_ids;
+            } else {
+                rolling_window_.insert(rolling_window_.end(), ordered_ids.begin(), ordered_ids.begin()+rolling_window_size_);
+            }
+            failed_rolling_window_.clear();
+            this->get_new_distance_matrix(rolling_window_);
+            return;
+        }
+
+        if (do_retry_){
+            // Move the rolling window failed poses back into unvisited poses
+            move_failed_to_unvisited(failed_rolling_window_);
+            // Join failed poses back into rolling window
+            rolling_window_.reserve(failed_rolling_window_.size());
+            rolling_window_.insert(rolling_window_.end(), failed_rolling_window_.begin(), failed_rolling_window_.end());
+            failed_rolling_window_.clear();
+        }
+        failed_rolling_window_.insert(failed_rolling_window_.end(), temp_failed_window.begin(), temp_failed_window.end());
+
+        this->get_new_distance_matrix(rolling_window_);        
+        return;
     }
-    RCLCPP_INFO(this->get_logger(), "Ordered waypoints: %s", msg.c_str());
-    update_visualization();
-    inspection_active = true;
-    pub_next_nav_goal();
+
 }
 
 
-void InspectionPlannerNode::get_new_distance_matrix(){
-    if (unvisited_poses_.size() == 0){
-        if (failed_poses_.size() == 0){
-            inspection_active = false;
-            RCLCPP_INFO(this->get_logger(), "Inspection complete. All inspection poses visited."); // TODO: placeholder next waypoint?
-            return;
-        }
-        move_failed_to_unvisited();
-    }
-
-    if (this->success_count_for_retry_ >= this->success_count_for_retry_threshold_){
-        move_failed_to_unvisited();
-        this->success_count_for_retry_ = 0;
-    }
-
+void InspectionPlannerNode::get_new_distance_matrix(const std::unordered_map<uint32_t, geometry_msgs::msg::Pose> poses){
     Waypoints waypoints_msg;
-    build_waypoints_msg(unvisited_poses_, waypoints_msg);
+    build_waypoints_msg(poses, waypoints_msg);
     tsp_waypoints_pub_->publish(waypoints_msg);
     waiting_new_tsp_result_ = true;
     return;
 }
 
 
+void InspectionPlannerNode::get_new_distance_matrix(const std::vector<uint32_t> pose_ids){
+    std::unordered_map<uint32_t, geometry_msgs::msg::Pose> poses;
+    for (auto id : pose_ids){
+        auto itr = unvisited_poses_.find(id);
+        if (itr != unvisited_poses_.end()){
+            poses[id] = itr->second;
+        }
+        else {
+            RCLCPP_WARN(this->get_logger(), "Cannot find id %d in unvisited poses, skipping id...", id);
+        }
+    }
+    Waypoints waypoints_msg;
+    build_waypoints_msg(poses, waypoints_msg);
+    tsp_waypoints_pub_->publish(waypoints_msg);
+    waiting_new_tsp_result_ = true;
+    return;
+}
 
 void InspectionPlannerNode::merge_similar_poses(std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& new_poses){
     for (auto it = new_poses.begin(); it != new_poses.end(); ++it){
@@ -618,6 +762,16 @@ void InspectionPlannerNode::move_failed_to_unvisited(){
     }
     failed_poses_.clear();
 }
+
+void InspectionPlannerNode::move_failed_to_unvisited(std::vector<uint32_t> ids){
+    for (uint32_t id : ids){
+        auto node = failed_poses_.extract(id);
+        if (node){
+            unvisited_poses_.insert(std::move(node));
+        }
+    }
+}
+
 
 
 
@@ -748,7 +902,7 @@ void InspectionPlannerNode::update_visualization()
     debug_msg.unvisited = unvisited_poses_msg;
     debug_msg.visited = visited_poses_msg;
     debug_msg.failed = failed_poses_msg;
-    debug_msg.ordered_ids = tsp_result_;
+    debug_msg.ordered_ids = poses_order_;
 
     viewposes_debug_pub_->publish(debug_msg);
 }
