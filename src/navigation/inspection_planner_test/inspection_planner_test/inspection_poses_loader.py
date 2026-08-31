@@ -97,7 +97,8 @@ class InspectionPosesLoader(Node):
             "img.tf_translation_x, img.tf_translation_y, img.tf_translation_z, "
             "img.tf_rotation_x, img.tf_rotation_y, img.tf_rotation_z, img.tf_rotation_w "
             "FROM abnormal_detections ad "
-            "JOIN images img ON ad.gt_image = img.id"
+            "JOIN images img ON ad.gt_image = img.id " 
+            "ORDER BY img.timestamp_ns"
         )
         rows = cur.fetchall()
         conn.close()

@@ -32,8 +32,10 @@ setup(
             "goal_pose_recorder = inspection_planner_test.goal_pose_recorder:main",
             "waypoint_publisher_service = inspection_planner_test.waypoint_publisher_service:main",
             "viewpose_publisher_service = inspection_planner_test.viewpose_publisher_service:main", 
-            "inspection_poses_loader = inspection_planner_test.inspection_poses_loader:main", 
-            "odometry_saver = inspection_planner_test.odometry_saver:main", 
+            "inspection_poses_loader = inspection_planner_test.inspection_poses_loader:main",
+            "odometry_saver = inspection_planner_test.odometry_saver:main",
+            "poses_visualizer = inspection_planner_test.poses_visualizer:main",
+            "latest_pose_to_odom = inspection_planner_test.latest_pose_to_odom:main",
         ],
     },
 )
