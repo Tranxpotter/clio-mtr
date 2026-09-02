@@ -1,0 +1,5 @@
+inspection_planner_interfaces/ViewPoses poses
+inspection_planner_interfaces/TspDistanceMatrix matrix
+---
+inspection_planner_interfaces/TspDistanceMatrix matrix
+string msg

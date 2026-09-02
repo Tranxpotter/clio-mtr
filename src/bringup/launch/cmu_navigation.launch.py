@@ -32,8 +32,8 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     # Set these values
-    default_map_path = "data/centen_test/centen_transformed.pcd"
-    default_graph_path = "data/centen_test/centen.vgh"
+    default_map_path = "data/iw_maps/outside1_transformed.pcd"
+    default_graph_path = "data/iw_graphs/outside1.vgh"
 
 
 

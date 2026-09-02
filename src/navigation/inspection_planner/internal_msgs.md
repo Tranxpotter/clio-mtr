@@ -1,4 +1,23 @@
-# Logging Messages
+# Distance Matrix
+## FAR Planner Distance Matrix Calculator
+- name: `/inspection_waypoints`
+  - type: `inspection_planner_interfaces::msg::Waypoints`
+  - qos: 1
+  - function: Pass waypoints to FAR Planner distance matrix calculator
+- name: `/tsp_distance_matrix`
+  - type: `inspection_planner_interfaces::msg::TspDistanceMatrix`
+  - qos: 1
+  - function: Receive FAR Planner distance matrix calculator result
+
+## Distance Matrix Trajectory Cost Augmenter Service
+- name: `/inject_trajectory_cost`
+  - type: `inspection_planner_interfaces::srv::InjectTrajectoryCost`
+  - function: Add trajectory cost to tsp matrix
+
+
+
+# Logging
+## Logging Messages
 - name: `/inspection_log/msg`
   - type: `std_msgs::msg::String`
   - qos: 10
@@ -20,11 +39,11 @@
   - qos: 5
   - function: Passes the number of poses added each service call
 
-# Logging Services
+## Logging Services
 - name: `/inspection_log/log_displacement`
   - type: `inspection_planner_interfaces::srv::LogDisplacement`
 
-# Visualization Messages
+## Visualization Messages
 - name: `/inspection_log/viewpoints_viz`
   - type: `visualization_msgs::msg::MarkerArray`
   - qos: 5
@@ -34,7 +53,7 @@
   - qos: 5
   - function: Rviz visualization of orientation of view poses
 
-# Debugging Messages
+## Debugging Messages
 - name: `/inspection_debug/latest_pose`
   - type: `inspection_planner_interfaces::msg::ViewPose`
   - qos: 5

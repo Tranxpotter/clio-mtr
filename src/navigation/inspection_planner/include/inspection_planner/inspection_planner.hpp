@@ -34,6 +34,7 @@
 #include <inspection_planner_interfaces/msg/waypoint.hpp>
 #include <inspection_planner_interfaces/msg/view_poses.hpp>
 #include <inspection_planner_interfaces/msg/view_pose.hpp>
+#include <inspection_planner_interfaces/srv/inject_trajectory_cost.hpp>
 #include <inspection_planner_interfaces/srv/solve_tsp.hpp>
 #include <inspection_planner_interfaces/action/nav_to_pose.hpp>
 #include <inspection_planner_interfaces/msg/view_poses_debug.hpp>
@@ -44,6 +45,7 @@ using NavToPose = inspection_planner_interfaces::action::NavToPose;
 using NavGoalHandle = rclcpp_action::ClientGoalHandle<NavToPose>;
 using ViewPose = inspection_planner_interfaces::msg::ViewPose;
 using ViewPoses = inspection_planner_interfaces::msg::ViewPoses;
+using InjectTrajectoryCost = inspection_planner_interfaces::srv::InjectTrajectoryCost;
 using SolveTsp = inspection_planner_interfaces::srv::SolveTsp;
 using Waypoints = inspection_planner_interfaces::msg::Waypoints;
 using TspDistanceMatrix = inspection_planner_interfaces::msg::TspDistanceMatrix;
@@ -56,6 +58,7 @@ class InspectionPlannerNode : public rclcpp::Node
     private:
         rclcpp::Subscription<ViewPoses>::SharedPtr inspection_poses_sub_;               // Inspection poses input topic
         rclcpp_action::Client<NavToPose>::SharedPtr nav_action_client_;              // Goal pose navigator action server client
+        rclcpp::Client<InjectTrajectoryCost>::SharedPtr inject_cost_client_;            // Trajectory Cost injection client
         rclcpp::Client<SolveTsp>::SharedPtr tsp_solver_client_;                         // tsp solver client
         rclcpp::Publisher<Waypoints>::SharedPtr tsp_waypoints_pub_;                     // Publishes inspection waypoints to far planner tsp distance matrix calculator
         rclcpp::Subscription<TspDistanceMatrix>::SharedPtr tsp_distance_matrix_sub_;    // Get tsp distance matrix
@@ -74,7 +77,8 @@ class InspectionPlannerNode : public rclcpp::Node
 
         std::string inspection_poses_sub_topic_;    // inspection_poses_sub_
         std::string nav_action_server_name_;        // nav_action_client_
-        std::string tsp_solver_srv_;                // tsp_solver_client_
+        std::string inject_cost_srv_name_;
+        std::string tsp_solver_srv_name_;                // tsp_solver_client_
         std::string tsp_waypoints_pub_topic_;       // tsp_waypoints_pub_
         std::string tsp_distance_matrix_sub_topic_; // tsp_distance_matrix_sub_
         std::string planner_status_sub_topic_;      // 
@@ -84,6 +88,7 @@ class InspectionPlannerNode : public rclcpp::Node
         double pose_merge_angular_tolerance_;
         double redo_tsp_period_;
         int success_count_for_retry_threshold_;
+        bool do_cost_injection_;
 
         enum class PlannerMode{
             Ascending, 
@@ -119,6 +124,8 @@ class InspectionPlannerNode : public rclcpp::Node
          * @param msg 
          */
         void distance_matrix_callback(const TspDistanceMatrix::SharedPtr msg);
+
+        void inject_cost_callback(const rclcpp::Client<InjectTrajectoryCost>::SharedFuture future_cmd);
 
         /**
          * @brief Get TSP result and start navigation

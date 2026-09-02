@@ -42,6 +42,13 @@ def generate_launch_description():
         # prefix=['xterm -e gdb -ex run --args']    # debug
     )
 
+    cost_augmenter = Node(
+        package="inspection_planner", 
+        executable="trajectory_cost_augmenter", 
+        name="trajectory_cost_augmenter", 
+        parameters=[config_file]
+    )
+
     inspection_planner = Node(
         package="inspection_planner", 
         executable="inspection_planner", 
@@ -68,6 +75,7 @@ def generate_launch_description():
         declare_launch_rviz, 
         tsp_solver, 
         logger, 
+        cost_augmenter, 
         inspection_planner, 
         rviz
     ])

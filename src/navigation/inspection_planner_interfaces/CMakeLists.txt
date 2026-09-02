@@ -28,6 +28,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/PublishWaypointsFromYaml.srv"
   "srv/SolveTsp.srv"
   "srv/LogDisplacement.srv"
+  "srv/InjectTrajectoryCost.srv"
   "action/NavToPose.action"
   DEPENDENCIES geometry_msgs std_msgs
 )

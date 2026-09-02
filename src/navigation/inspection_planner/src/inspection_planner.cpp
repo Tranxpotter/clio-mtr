@@ -16,6 +16,10 @@ InspectionPlannerNode::InspectionPlannerNode()
     auto tsp_solver_srv_name_desc = rcl_interfaces::msg::ParameterDescriptor();
     tsp_solver_srv_name_desc.description = "TSP Solver service name";
     this->declare_parameter<std::string>("tsp_solver", "/solve_tsp", tsp_solver_srv_name_desc);
+    
+    auto inject_cost_srv_name_desc = rcl_interfaces::msg::ParameterDescriptor();
+    inject_cost_srv_name_desc.description = "Trajectory Cost Injector service name";
+    this->declare_parameter<std::string>("cost_injector", "/inject_trajectory_cost", inject_cost_srv_name_desc);
 
     auto tsp_waypoints_pub_topic_desc = rcl_interfaces::msg::ParameterDescriptor();
     tsp_waypoints_pub_topic_desc.description = "Inspection waypoints publish topic";
@@ -59,11 +63,16 @@ InspectionPlannerNode::InspectionPlannerNode()
     auto rolling_window_size_desc = rcl_interfaces::msg::ParameterDescriptor();
     rolling_window_size_desc.description = "Size of rolling window for rolling-tsp mode.";
     this->declare_parameter<int>("rolling_window_size", 5, rolling_window_size_desc);
-
+    
+    auto do_cost_injection_desc = rcl_interfaces::msg::ParameterDescriptor();
+    do_cost_injection_desc.description = "Whether to do trajectory cost injection or not.";
+    this->declare_parameter<bool>("do_cost_injection", true, do_cost_injection_desc);
+    
     // Get parameters
     inspection_poses_sub_topic_ = this->get_parameter("inspection_poses_topic").as_string();
     nav_action_server_name_ = this->get_parameter("nav_action_server_name").as_string();
-    tsp_solver_srv_ = this->get_parameter("tsp_solver").as_string();
+    inject_cost_srv_name_ = this->get_parameter("cost_injector").as_string();
+    tsp_solver_srv_name_ = this->get_parameter("tsp_solver").as_string();
     tsp_waypoints_pub_topic_ = this->get_parameter("tsp_waypoints_topic").as_string();
     tsp_distance_matrix_sub_topic_ = this->get_parameter("tsp_distance_matrix_topic").as_string();
     planner_status_sub_topic_ = this->get_parameter("planner_status_topic").as_string();
@@ -89,6 +98,8 @@ InspectionPlannerNode::InspectionPlannerNode()
         rolling_window_size_ = 5;
     }
 
+    do_cost_injection_ = this->get_parameter("do_cost_injection").as_bool();
+
 
 
     /* Create ... Stuff */
@@ -103,7 +114,9 @@ InspectionPlannerNode::InspectionPlannerNode()
         nav_action_server_name_
     );
 
-    tsp_solver_client_ = this->create_client<SolveTsp>(tsp_solver_srv_);
+    inject_cost_client_ = this->create_client<InjectTrajectoryCost>(inject_cost_srv_name_);
+
+    tsp_solver_client_ = this->create_client<SolveTsp>(tsp_solver_srv_name_);
 
     tsp_waypoints_pub_ = this->create_publisher<Waypoints>(tsp_waypoints_pub_topic_, 1);
 
@@ -198,9 +211,36 @@ void InspectionPlannerNode::inspection_poses_callback(const ViewPoses::SharedPtr
 void InspectionPlannerNode::distance_matrix_callback(const TspDistanceMatrix::SharedPtr msg){
     RCLCPP_DEBUG(this->get_logger(), "Received new distance matrix. Pausing robot navigation. Requesting TSP Solver.");
 
+    if (!do_cost_injection_){
+        auto request = std::make_shared<SolveTsp::Request>();
+        request->matrix = *msg;
+        RCLCPP_INFO(this->get_logger(), "Sending matrix to tsp solver");
+        auto future = tsp_solver_client_->async_send_request(request, std::bind(&InspectionPlannerNode::tsp_result_callback, this, std::placeholders::_1));
+    } else {
+        auto request = std::make_shared<InjectTrajectoryCost::Request>();
+        request->matrix = *msg;
+        ViewPoses poses;
+        this->build_poses_msg(unvisited_poses_, poses); // Is only unvisited poses enough?
+        this->build_poses_msg(visited_poses_, poses);
+        this->build_poses_msg(failed_poses_, poses);
+        request->poses = poses;
+        
+        RCLCPP_INFO(this->get_logger(), "Sending matrix to cost augmenter");
+        auto future = inject_cost_client_->async_send_request(request, std::bind(&InspectionPlannerNode::inject_cost_callback, this, std::placeholders::_1));
+    }
+}
+
+void InspectionPlannerNode::inject_cost_callback(const rclcpp::Client<InjectTrajectoryCost>::SharedFuture future_cmd){
+    RCLCPP_INFO(this->get_logger(), "Received injected matrix!");
+    auto response = future_cmd.get();
+    if (response->msg.size() > 0){
+        this->log_error_msg("Trajectory Cost Injector Log: " + response->msg);
+    }
+    // Make tsp request
     auto request = std::make_shared<SolveTsp::Request>();
-    request->matrix = *msg;
+    request->matrix = response->matrix;
     auto future = tsp_solver_client_->async_send_request(request, std::bind(&InspectionPlannerNode::tsp_result_callback, this, std::placeholders::_1));
+    
 }
 
 void InspectionPlannerNode::tsp_result_callback(rclcpp::Client<SolveTsp>::SharedFuture future){

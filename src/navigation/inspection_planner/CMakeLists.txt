@@ -45,6 +45,21 @@ ament_target_dependencies(logger
   tf2_geometry_msgs
 )
 
+# Trajectory Cost Augmenter executable
+add_executable(trajectory_cost_augmenter src/trajectory_cost_augmenter.cpp)
+target_include_directories(trajectory_cost_augmenter PRIVATE include)
+ament_target_dependencies(trajectory_cost_augmenter
+  rclcpp
+  inspection_planner_interfaces
+  geometry_msgs
+  visualization_msgs
+  std_msgs
+  std_srvs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+
 # Inspection Planner executable
 add_executable(inspection_planner src/inspection_planner.cpp)
 target_include_directories(inspection_planner PRIVATE include)
@@ -71,6 +86,12 @@ install(TARGETS
 
 install(TARGETS
   logger
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+
+install(TARGETS
+  trajectory_cost_augmenter
   DESTINATION lib/${PROJECT_NAME}
 )
 
