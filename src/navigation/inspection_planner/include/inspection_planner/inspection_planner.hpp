@@ -13,6 +13,7 @@
 #include <cmath>
 #include <iostream>
 #include <fstream>
+#include <optional>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
@@ -107,7 +108,9 @@ class InspectionPlannerNode : public rclcpp::Node
         bool do_retry_;
         int rolling_window_size_;
         
-
+        /* TF */
+        std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+        std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
         /* Subscriber and Server Callbacks */
 
@@ -295,6 +298,15 @@ class InspectionPlannerNode : public rclcpp::Node
             std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& map, 
             const std::unordered_map<uint32_t, geometry_msgs::msg::Pose>& new_map
         );
+
+        /**
+         * @brief Get the pose from map -> robot_footprint at tf2::TimePointZero
+         * 
+         * @return std::optional<geometry_msgs::msg::Pose> 
+         */
+        std::optional<geometry_msgs::msg::Pose> get_robot_map_pose();
+
+
 
         /* Debug Use */
 

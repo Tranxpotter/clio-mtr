@@ -16,7 +16,7 @@ inspection_planner:
     tsp_distance_matrix_topic: "/tsp_distance_matrix"
     pose_merge_distance_tolerance: 0.3
     pose_merge_angular_tolerance: 0.349066  # 20 degrees in radians
-    planner_mode: tsp-once             #  ascending, tsp-once, tsp, rolling-tsp
+    planner_mode: tsp             #  ascending, tsp-once, tsp, rolling-tsp
     do_retry: false
     rolling_window_size: 5
     do_cost_injection: true

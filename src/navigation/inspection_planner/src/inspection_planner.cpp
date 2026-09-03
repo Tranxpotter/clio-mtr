@@ -175,6 +175,10 @@ InspectionPlannerNode::InspectionPlannerNode()
        "/inspection_debug/latest_pose", 
        5 
     );
+
+    // Tf
+    this->tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    this->tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 }
 
 
@@ -223,6 +227,13 @@ void InspectionPlannerNode::distance_matrix_callback(const TspDistanceMatrix::Sh
         this->build_poses_msg(unvisited_poses_, poses); // Is only unvisited poses enough?
         this->build_poses_msg(visited_poses_, poses);
         this->build_poses_msg(failed_poses_, poses);
+        auto robot_pose = this->get_robot_map_pose();
+        if (robot_pose){
+            ViewPose robot_view_pose;
+            robot_view_pose.id = 0;
+            robot_view_pose.pose = *robot_pose;
+            poses.poses.push_back(robot_view_pose);
+        }
         request->poses = poses;
         
         RCLCPP_INFO(this->get_logger(), "Sending matrix to cost augmenter");
@@ -920,6 +931,34 @@ void InspectionPlannerNode::merge_poses_maps(
         map[id] = pose;
     }
 }
+
+
+
+
+std::optional<geometry_msgs::msg::Pose> InspectionPlannerNode::get_robot_map_pose(){
+    try{
+        auto transform = tf_buffer_->lookupTransform("robot_footprint", "map", tf2::TimePointZero);
+        
+        // Build pose
+        geometry_msgs::msg::Pose pose;
+        pose.position.x = transform.transform.translation.x;
+        pose.position.y = transform.transform.translation.y;
+        pose.position.z = transform.transform.translation.z;
+        
+        pose.orientation.x = transform.transform.rotation.x;
+        pose.orientation.y = transform.transform.rotation.y;
+        pose.orientation.z = transform.transform.rotation.z;
+        pose.orientation.w = transform.transform.rotation.w;
+        return pose;
+    } catch (const std::exception& e){
+        RCLCPP_ERROR(this->get_logger(), "Cannot get robot map pose, error: %s", e.what());
+        return std::nullopt;
+    }
+}
+
+
+
+
 
 
 void InspectionPlannerNode::log_msg(const std::string &msg)
