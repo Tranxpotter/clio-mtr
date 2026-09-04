@@ -937,7 +937,7 @@ void InspectionPlannerNode::merge_poses_maps(
 
 std::optional<geometry_msgs::msg::Pose> InspectionPlannerNode::get_robot_map_pose(){
     try{
-        auto transform = tf_buffer_->lookupTransform("robot_footprint", "map", tf2::TimePointZero);
+        auto transform = tf_buffer_->lookupTransform("map", "robot_footprint", tf2::TimePointZero);
         
         // Build pose
         geometry_msgs::msg::Pose pose;
